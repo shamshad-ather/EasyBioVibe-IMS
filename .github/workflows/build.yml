@@ -1,11 +1,18 @@
 name: Build EasyBioVibe-IMS
 
-# Push a tag like "v2026.07.03" to build + publish installers for all three OSes.
-# Manual "Run workflow" also builds artifacts without publishing a release.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+
 
 jobs:
   build:
