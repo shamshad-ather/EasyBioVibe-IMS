@@ -41,7 +41,7 @@ jobs:
 
       - name: Build installer (Inno Setup, preinstalled on windows-latest)
         if: matrix.os == 'windows-latest'
-        run: '"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\windows\installer.iss'
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\windows\installer.iss'
 
       - name: Upload Windows installer
         if: matrix.os == 'windows-latest'
