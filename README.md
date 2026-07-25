@@ -31,4 +31,4 @@ If you wish to contribute to the code or build the executables yourself, this pr
 Please refer to the [`packaging.md`](packaging.md) file for comprehensive instructions on setting up your environment, running the developer server, and compiling the standalone binaries.
 
 ---
-*Vibed by Shamshad Ather*
+*Vibed by Shamshad Ather using Gemini and Calude*
