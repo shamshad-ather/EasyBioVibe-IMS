@@ -252,6 +252,7 @@ textarea.form-control{min-height:80px;resize:vertical}
             <span id="currentUserDisplay" style="font-size:13px;color:rgba(255,255,255,0.85);"></span>
             <span class="role-badge" id="currentRole">Manager</span>
             <button class="btn btn-sm" style="background:rgba(255,255,255,0.15);color:white;" onclick="openProfileModal()">My Profile</button>
+            <button class="btn btn-sm" style="background:rgba(255,255,255,0.15);color:white;" onclick="toggleRole()">Switch Role</button>
             <button class="btn btn-sm" style="background:rgba(255,255,255,0.15);color:white;" onclick="logoutUser()">Logout</button>
         </div>
     </header>
@@ -466,9 +467,6 @@ async function handleLogin(e) {
         setCurrentUser(data.username, data.role);
         await loadRealData();
         navigateTo('home');
-        if (data.must_change_password) {
-            showToast('You\'re using the default password — please change it in My Profile.', 'info');
-        }
     } else {
         document.getElementById('loginError').textContent = data.message;
         document.getElementById('loginError').style.display = 'block';
@@ -698,6 +696,61 @@ function showToast(message, type) {
     setTimeout(() => { toast.style.animation = 'fadeOut 0.3s ease forwards'; setTimeout(() => toast.remove(), 300); }, 3000);
 }
 
+function toggleRole() {
+    if (DB.settings.currentRole === 'Admin') {
+        DB.settings.currentRole = 'Manager';
+        document.getElementById('currentRole').textContent = 'Manager';
+        showToast('Switched to Manager role', 'info');
+        applyBranding();
+        renderCurrentPage();
+        return;
+    }
+
+    openModal('Switch to Admin', `
+        <form id="roleAuthForm" onsubmit="confirmAdminSwitch(event)">
+            <p style="font-size:13px;color:var(--gray-500);margin-bottom:16px;">Enter an Admin account's credentials to switch roles.</p>
+            <div class="form-group"><label>Username</label><input type="text" class="form-control" name="Username" required autofocus></div>
+            <div class="form-group"><label>Password</label><input type="password" class="form-control" name="Password" required></div>
+            <div id="roleAuthError" class="auth-error"></div>
+        </form>
+    `, null, `
+        <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="document.getElementById('roleAuthForm').dispatchEvent(new Event('submit', {cancelable: true}))">Verify & Switch</button>
+    `);
+}
+
+async function confirmAdminSwitch(e) {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(document.getElementById('roleAuthForm')));
+    const errorDiv = document.getElementById('roleAuthError');
+    errorDiv.style.display = 'none';
+
+    try {
+        const res = await fetch('/login', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: data.Username, password: data.Password })
+        });
+        const result = await res.json();
+
+        if (result.status === 'success' && result.role === 'Admin') {
+            setCurrentUser(data.Username, 'Admin');
+            closeModal();
+            showToast('Switched to Admin role', 'success');
+            applyBranding();
+            renderCurrentPage();
+        } else if (result.status === 'success') {
+            errorDiv.textContent = 'That account is not an Admin.';
+            errorDiv.style.display = 'block';
+        } else {
+            errorDiv.textContent = result.message || 'Invalid username or password';
+            errorDiv.style.display = 'block';
+        }
+    } catch (err) {
+        errorDiv.textContent = 'Connection error: Is Python running?';
+        errorDiv.style.display = 'block';
+    }
+}
+
 function isAdmin() { return DB.settings.currentRole === 'Admin'; }
 
 // ==================== MODAL ====================
@@ -730,121 +783,98 @@ function openProfileModal() {
 
     openModal('My Profile', `
         <form id="profileForm" onsubmit="saveProfile(event)">
+            <input type="hidden" name="id" value="${currentUserObj.id}">
+            <input type="hidden" name="Role" value="${currentUserObj.Role}">
+            <input type="hidden" name="Status" value="${currentUserObj.Status}">
+            
             <div class="form-group">
                 <label>Username (Name)</label>
                 <input type="text" class="form-control" name="UserName" value="${escapeHtml(currentUserObj.UserName)}" required>
             </div>
-
+            
             <div class="form-group">
                 <label>Department</label>
                 <input type="text" class="form-control" name="Department" value="${escapeHtml(currentUserObj.Department || '')}">
             </div>
-
+            
             <div class="form-group">
                 <label>Designation</label>
                 <select class="form-control" name="Designation">
                     ${DESIGNATIONS.map(d => `<option value="${d}" ${currentUserObj.Designation === d ? 'selected' : ''}>${d}</option>`).join('')}
                 </select>
             </div>
+            
+            <div class="form-group">
+                <label>New Password</label>
+                <input type="password" class="form-control" name="Password" id="profilePassword" placeholder="Enter new password">
+            </div>
 
+            <div class="form-group">
+                <label>Retype New Password</label>
+                <input type="password" class="form-control" id="profileConfirmPassword" placeholder="Retype new password">
+                <p style="font-size:11px;color:var(--gray-500);margin-top:6px;">Leave both blank to retain current password. Default password is: password123</p>
+            </div>
+            
             <div class="form-group">
                 <label>Assigned Role (Immutable)</label>
                 <input type="text" class="form-control" value="${currentUserObj.Role}" disabled>
             </div>
         </form>
-
-        <hr style="margin:20px 0;border:none;border-top:1px solid var(--gray-200);">
-
-        <form id="passwordForm" onsubmit="saveOwnPassword(event)">
-            <p style="font-size:13px;font-weight:600;margin-bottom:4px;">Change Password</p>
-            <p style="font-size:11px;color:var(--gray-500);margin-bottom:12px;">New accounts start on the default password <strong>password123</strong> -- change it here if you haven't already.</p>
-            <div class="form-group">
-                <label>Current Password</label>
-                <input type="password" class="form-control" name="CurrentPassword" required>
-            </div>
-            <div class="form-group">
-                <label>New Password</label>
-                <input type="password" class="form-control" name="NewPassword" minlength="6" required>
-            </div>
-            <div class="form-group">
-                <label>Retype New Password</label>
-                <input type="password" class="form-control" name="ConfirmPassword" minlength="6" required>
-            </div>
-            <div id="passwordFormError" class="auth-error"></div>
-            <button type="submit" class="btn btn-primary" style="width:100%;">Update Password</button>
-        </form>
     `, null, `
-        <button type="button" class="btn btn-secondary" onclick="closeModal()">Close</button>
+        <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
         <button type="button" class="btn btn-primary" onclick="document.getElementById('profileForm').dispatchEvent(new Event('submit', {cancelable: true}))">Save Profile</button>
     `);
 }
 
 async function saveProfile(e) {
     e.preventDefault();
+    const pwd = document.getElementById('profilePassword').value;
+    const cpwd = document.getElementById('profileConfirmPassword').value;
+    
+    if (pwd || cpwd) {
+        if (pwd !== cpwd) {
+            showToast('Passwords do not match!', 'error');
+            return;
+        }
+    }
+
     const data = Object.fromEntries(new FormData(document.getElementById('profileForm')));
-
+    const currentUserObj = DB.users.find(u => u.UserName === DB.settings.currentUser);
+    
     const payload = {
+        id: parseInt(data.id),
         name: data.UserName,
+        password: pwd || '',
+        role: data.Role,
         department: data.Department,
-        designation: data.Designation
+        designation: data.Designation,
+        study_ids: currentUserObj.StudyIDs,
+        status: data.Status
     };
-
+    
     try {
-        // Self-service edits go through /api/profile now, not the
-        // admin-only /api/users -- a non-admin editing their own info can
-        // no longer accidentally (or maliciously) touch role/status here.
-        const res = await fetch('/api/profile', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+        const res = await fetch('/api/users', { 
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json' }, 
+            body: JSON.stringify(payload) 
         });
         const result = await res.json();
-
+        
         if (result.status === 'success') {
             showToast('Profile updated successfully!', 'success');
-            if (result.username !== DB.settings.currentUser) {
-                setCurrentUser(result.username, DB.settings.currentRole);
+            
+            if(data.UserName !== DB.settings.currentUser) {
+                setCurrentUser(data.UserName, DB.settings.currentRole);
             }
+            
             await loadRealData();
             closeModal();
-            if (currentPage === 'users') renderCurrentPage();
+            if(currentPage === 'users') renderCurrentPage();
         } else {
             showToast(result.message || 'Error saving profile', 'error');
         }
     } catch (err) {
         showToast('Connection error.', 'error');
-    }
-}
-
-async function saveOwnPassword(e) {
-    e.preventDefault();
-    const data = Object.fromEntries(new FormData(document.getElementById('passwordForm')));
-    const errorDiv = document.getElementById('passwordFormError');
-    errorDiv.style.display = 'none';
-
-    if (data.NewPassword !== data.ConfirmPassword) {
-        errorDiv.textContent = 'New passwords do not match.';
-        errorDiv.style.display = 'block';
-        return;
-    }
-
-    try {
-        const res = await fetch('/api/profile/password', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ current_password: data.CurrentPassword, new_password: data.NewPassword })
-        });
-        const result = await res.json();
-        if (result.status === 'success') {
-            showToast('Password updated!', 'success');
-            document.getElementById('passwordForm').reset();
-        } else {
-            errorDiv.textContent = result.message || 'Could not update password';
-            errorDiv.style.display = 'block';
-        }
-    } catch (err) {
-        errorDiv.textContent = 'Connection error.';
-        errorDiv.style.display = 'block';
     }
 }
 
@@ -1484,10 +1514,6 @@ async function logHistory(entity, entityCode, field, oldVal, newVal) {
     }
 }
 
-// Compares newFields (a plain object of {FieldLabel: newValue}) against the
-// matching properties on oldItem, and logs one History_Logs row per field
-// that actually changed. Pass oldItem=null for brand-new records to log a
-// single "(created)" entry instead of a field-by-field diff.
 async function logChangedFields(entity, entityCode, oldItem, newFields) {
     if (!oldItem) {
         const summary = Object.values(newFields)[0] || entityCode;

@@ -1,11 +1,9 @@
 from flask import Flask, render_template, request, jsonify, session
 from flask_bcrypt import Bcrypt
-from functools import wraps
 import sqlite3
 import datetime
 import os
 import sys
-import secrets
 from pathlib import Path
 
 def resource_path(relative):
@@ -23,35 +21,12 @@ def gen_code(name, fallback='GEN'):
         code = ''
     return code or fallback
 
-# Fixed, admin-controlled designation list (see /api/users).
-DESIGNATIONS = [
-    'HoD', 'Faculty', 'Lab Tech', 'Student', 'JR', 'SR',
-    'Research Associate', 'Project Associate', 'Research Assistant',
-    'Project Assistant', 'Intern', 'IT personal', 'Other'
-]
-DEFAULT_PASSWORD = 'password123'
-
 app = Flask(__name__, template_folder=resource_path('templates'), static_folder=resource_path('static'))
+app.secret_key = "easybiovibe_super_secret_key"
+bcrypt = Bcrypt(app)
 
 _CACHE_DIR = os.path.join(Path.home(), '.cache', 'easybiovibe')
 os.makedirs(_CACHE_DIR, exist_ok=True)
-
-# --- Secret key: generated once per install, never hardcoded/committed ---
-# A hardcoded secret_key baked into every copy of the source (and every
-# packaged executable built from it) lets anyone who has read the public
-# repo forge a signed session cookie for ANY install of this app -- e.g.
-# a cookie claiming {"user": "attacker", "role": "Admin"} -- with no
-# password required at all. Instead, generate a random key the first time
-# the app runs on a given machine and reuse it from then on.
-_SECRET_KEY_PATH = os.path.join(_CACHE_DIR, 'secret.key')
-if not os.path.exists(_SECRET_KEY_PATH):
-    with open(_SECRET_KEY_PATH, 'w') as f:
-        f.write(secrets.token_hex(32))
-with open(_SECRET_KEY_PATH, 'r') as f:
-    app.secret_key = f.read().strip()
-
-bcrypt = Bcrypt(app)
-
 DB_PATH = os.path.join(_CACHE_DIR, 'easybiovibe.db')
 
 _OLD_DB_PATH = os.path.join(Path.home(), 'easylab_database.db')
@@ -83,7 +58,7 @@ def init_db():
         status TEXT DEFAULT 'Active'
     )''')
 
-    for col, col_type in [("faculty_id", "INTEGER"), ("designation", "TEXT"), ("must_change_password", "INTEGER DEFAULT 0")]:
+    for col, col_type in [("faculty_id", "INTEGER"), ("designation", "TEXT")]:
         try:
             c.execute(f"ALTER TABLE Users ADD COLUMN {col} {col_type}")
         except sqlite3.OperationalError:
@@ -182,31 +157,6 @@ def init_db():
 
 init_db()
 
-# ==================== AUTH ====================
-# Nearly every data route below previously had no session check at all,
-# and /api/users' edit path let anyone reset any user's password with no
-# login. These two decorators are the single source of truth for auth from
-# here on -- every route that reads or writes lab data requires a real
-# login, and anything sensitive (user management, DB export/import,
-# settings) requires the Admin role specifically.
-def login_required(fn):
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        if not session.get('user'):
-            return jsonify({"status": "error", "message": "Not logged in"}), 401
-        return fn(*args, **kwargs)
-    return wrapper
-
-def admin_required(fn):
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        if not session.get('user'):
-            return jsonify({"status": "error", "message": "Not logged in"}), 401
-        if session.get('role') != 'Admin':
-            return jsonify({"status": "error", "message": "Admin privileges required"}), 403
-        return fn(*args, **kwargs)
-    return wrapper
-
 @app.route('/')
 def home():
     return render_template('index.html')
@@ -278,11 +228,6 @@ def setup_system():
 
 @app.route('/api/settings', methods=['GET', 'POST'])
 def handle_settings():
-    if request.method == 'POST':
-        if not session.get('user'):
-            return jsonify({"status": "error", "message": "Not logged in"}), 401
-        if session.get('role') != 'Admin':
-            return jsonify({"status": "error", "message": "Admin privileges required"}), 403
     conn = get_db()
     c = conn.cursor()
     if request.method == 'POST':
@@ -310,10 +255,7 @@ def login():
     if user and bcrypt.check_password_hash(user['password'], data.get('password')):
         session['user'] = data.get('username')
         session['role'] = user['role']
-        return jsonify({
-            "status": "success", "role": user['role'], "username": data.get('username'),
-            "must_change_password": bool(user['must_change_password'])
-        })
+        return jsonify({"status": "success", "role": user['role'], "username": data.get('username')})
     return jsonify({"status": "error", "message": "Invalid username or password"}), 401
 
 @app.route('/logout', methods=['POST'])
@@ -322,7 +264,6 @@ def logout():
     return jsonify({"status": "success"})
 
 @app.route('/api/inventory', methods=['GET', 'POST'])
-@login_required
 def handle_inventory():
     conn = get_db()
     c = conn.cursor()
@@ -354,7 +295,6 @@ def handle_inventory():
     return jsonify(rows)
 
 @app.route('/api/departments', methods=['GET', 'POST'])
-@login_required
 def handle_departments():
     conn = get_db()
     c = conn.cursor()
@@ -378,7 +318,6 @@ def handle_departments():
     return jsonify(rows)
 
 @app.route('/api/faculty', methods=['GET', 'POST'])
-@login_required
 def handle_faculty():
     conn = get_db()
     c = conn.cursor()
@@ -403,24 +342,14 @@ def handle_faculty():
                 c.execute("SELECT name FROM Departments WHERE id=?", (data.get('department_id'),))
                 d = c.fetchone()
                 dept_name = d['name'] if d else ''
-
-            # Only an Admin may provision a new login account -- adding a
-            # Faculty master record used to auto-create one for anyone who
-            # was merely logged in (or, before login_required existed above,
-            # for anyone at all), bypassing the "Admin-only user creation"
-            # rule entirely. A non-admin still gets the Faculty record; they
-            # just don't get a free login account handed out alongside it.
-            if session.get('role') == 'Admin':
-                try:
-                    hashed_pw = bcrypt.generate_password_hash(DEFAULT_PASSWORD).decode('utf-8')
-                    c.execute("""INSERT INTO Users (username, password, role, department, designation, study_ids, status, faculty_id, must_change_password)
-                                 VALUES (?, ?, 'Manager', ?, 'Faculty', 'ALL', 'Active', ?, 1)""",
-                              (data.get('name'), hashed_pw, dept_name, new_faculty_id))
-                    note = f"Login created for this faculty member (default password: {DEFAULT_PASSWORD})."
-                except sqlite3.IntegrityError:
-                    note = "Faculty saved, but a user with that username already exists — link the account manually."
-            else:
-                note = "Faculty saved. Ask an Admin to create a login account for them from the Users page."
+            try:
+                hashed_pw = bcrypt.generate_password_hash('password123').decode('utf-8')
+                c.execute("""INSERT INTO Users (username, password, role, department, designation, study_ids, status, faculty_id)
+                             VALUES (?, ?, 'Manager', ?, 'Faculty', 'ALL', 'Active', ?)""",
+                          (data.get('name'), hashed_pw, dept_name, new_faculty_id))
+                note = "Login created for this faculty member (default password: password123)."
+            except sqlite3.IntegrityError:
+                note = "Faculty saved, but a user with that username already exists — link the account manually."
         conn.commit()
         conn.close()
         return jsonify({"status": "success", "message": note})
@@ -431,7 +360,6 @@ def handle_faculty():
     return jsonify(rows)
 
 @app.route('/api/studies', methods=['GET', 'POST'])
-@login_required
 def handle_studies():
     conn = get_db()
     c = conn.cursor()
@@ -455,138 +383,48 @@ def handle_studies():
     return jsonify(rows)
 
 @app.route('/api/users', methods=['GET', 'POST'])
-@login_required
 def handle_users():
     conn = get_db()
     c = conn.cursor()
     if request.method == 'POST':
-        # Creating a user, or changing ANY field on an existing one (role,
-        # status, and -- this was the critical hole -- password) is
-        # admin-only. The old code only checked the role on the "create"
-        # path; the "edit" path (item_id present) ran unconditionally, so
-        # anyone, logged in or not, could POST {"id": 1, "password": "x"}
-        # and take over any account, including the head Admin's.
-        if session.get('role') != 'Admin':
-            conn.close()
-            return jsonify({"status": "error", "message": "Admin privileges required to add or modify users"}), 403
-
         data = request.get_json()
         item_id = data.get('id')
-
+        current_user_role = session.get('role', 'Manager')
+        
+        if not item_id and current_user_role != 'Admin':
+            return jsonify({"status": "error", "message": "Only Admins can add new users."}), 403
+            
         target_role = data.get('role', 'Manager')
-        designation = data.get('designation', 'Other')
-        if designation not in DESIGNATIONS:
-            designation = 'Other'
-
+        if target_role == 'Admin' and current_user_role != 'Admin':
+            target_role = 'Manager'
+        
         study_ids = data.get('study_ids', ['ALL'])
         study_ids_str = ",".join(map(str, study_ids)) if isinstance(study_ids, list) else str(study_ids)
         password_provided = data.get('password')
-
+        
         if item_id:
-            # Guard against locking everyone out by demoting/deactivating
-            # the last remaining active Admin.
-            if target_role != 'Admin' or data.get('status', 'Active') != 'Active':
-                c.execute("SELECT role, status FROM Users WHERE id=?", (item_id,))
-                target = c.fetchone()
-                if target and target['role'] == 'Admin' and target['status'] == 'Active':
-                    c.execute("SELECT COUNT(*) FROM Users WHERE role='Admin' AND status='Active'")
-                    if c.fetchone()[0] <= 1:
-                        conn.close()
-                        return jsonify({"status": "error", "message": "Can't remove the last active Admin"}), 400
-
             if password_provided:
                 hashed_pw = bcrypt.generate_password_hash(password_provided).decode('utf-8')
-                c.execute("UPDATE Users SET username=?, password=?, role=?, department=?, designation=?, study_ids=?, status=?, must_change_password=0 WHERE id=?",
-                          (data.get('name'), hashed_pw, target_role, data.get('department', ''), designation, study_ids_str, data.get('status', 'Active'), item_id))
+                c.execute("UPDATE Users SET username=?, password=?, role=?, department=?, designation=?, study_ids=?, status=? WHERE id=?",
+                          (data.get('name'), hashed_pw, target_role, data.get('department', ''), data.get('designation', 'Other'), study_ids_str, data.get('status', 'Active'), item_id))
             else:
                 c.execute("UPDATE Users SET username=?, role=?, department=?, designation=?, study_ids=?, status=? WHERE id=?",
-                          (data.get('name'), target_role, data.get('department', ''), designation, study_ids_str, data.get('status', 'Active'), item_id))
+                          (data.get('name'), target_role, data.get('department', ''), data.get('designation', 'Other'), study_ids_str, data.get('status', 'Active'), item_id))
         else:
-            pw_to_hash = password_provided if password_provided else DEFAULT_PASSWORD
+            pw_to_hash = password_provided if password_provided else 'password123'
             hashed_pw = bcrypt.generate_password_hash(pw_to_hash).decode('utf-8')
-            c.execute("INSERT INTO Users (username, password, role, department, designation, study_ids, status, must_change_password) VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
-                      (data.get('name'), hashed_pw, target_role, data.get('department', ''), designation, study_ids_str, data.get('status', 'Active')))
+            c.execute("INSERT INTO Users (username, password, role, department, designation, study_ids, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                      (data.get('name'), hashed_pw, target_role, data.get('department', ''), data.get('designation', 'Other'), study_ids_str, data.get('status', 'Active')))
         conn.commit()
         conn.close()
-        return jsonify({"status": "success", "default_password": DEFAULT_PASSWORD if not item_id and not password_provided else None})
-
-    # GET stays login-only (not admin-only): every signed-in user needs the
-    # roster to populate the "who used it" picker on the usage-log form.
+        return jsonify({"status": "success"})
+    
     c.execute("SELECT id, username AS user_name, role, department, designation, study_ids, status FROM Users")
     rows = [dict(r) for r in c.fetchall()]
     conn.close()
     return jsonify(rows)
 
-# ==================== MY PROFILE (self-service) ====================
-# /api/users is now admin-only (see fix for the password-reset hole above),
-# which would otherwise break the existing "My Profile" self-edit feature
-# for every non-admin user. These two routes let anyone edit their OWN
-# department/designation/username and change their OWN password (with
-# their current password required) without needing Admin rights, and
-# without touching role/status -- those stay admin-only via /api/users.
-@app.route('/api/profile', methods=['GET', 'POST'])
-@login_required
-def handle_profile():
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT * FROM Users WHERE username=?", (session['user'],))
-    me = c.fetchone()
-    if not me:
-        conn.close()
-        return jsonify({"status": "error", "message": "User not found"}), 404
-
-    if request.method == 'POST':
-        data = request.get_json()
-        new_username = (data.get('name') or me['username']).strip()
-        designation = data.get('designation', me['designation'] or '')
-        if designation not in DESIGNATIONS:
-            designation = 'Other'
-        department = data.get('department', me['department'] or '')
-
-        try:
-            c.execute("UPDATE Users SET username=?, department=?, designation=? WHERE id=?",
-                      (new_username, department, designation, me['id']))
-            conn.commit()
-        except sqlite3.IntegrityError:
-            conn.close()
-            return jsonify({"status": "error", "message": "That username is already taken"}), 400
-
-        if new_username != session['user']:
-            session['user'] = new_username  # keep the session in sync with a self-rename
-
-        conn.close()
-        return jsonify({"status": "success", "username": new_username})
-
-    profile = {"id": me['id'], "name": me['username'], "role": me['role'], "status": me['status'],
-               "department": me['department'] or '', "designation": me['designation'] or ''}
-    conn.close()
-    return jsonify(profile)
-
-@app.route('/api/profile/password', methods=['POST'])
-@login_required
-def change_own_password():
-    data = request.get_json()
-    current_password = data.get('current_password', '')
-    new_password = data.get('new_password', '')
-    if not new_password or len(new_password) < 6:
-        return jsonify({"status": "error", "message": "New password must be at least 6 characters"}), 400
-
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT * FROM Users WHERE username=?", (session['user'],))
-    me = c.fetchone()
-    if not me or not bcrypt.check_password_hash(me['password'], current_password):
-        conn.close()
-        return jsonify({"status": "error", "message": "Current password is incorrect"}), 401
-
-    hashed_pw = bcrypt.generate_password_hash(new_password).decode('utf-8')
-    c.execute("UPDATE Users SET password=?, must_change_password=0 WHERE id=?", (hashed_pw, me['id']))
-    conn.commit()
-    conn.close()
-    return jsonify({"status": "success"})
-
 @app.route('/api/batches', methods=['GET', 'POST'])
-@login_required
 def handle_batches():
     conn = get_db()
     c = conn.cursor()
@@ -614,7 +452,6 @@ def handle_batches():
     return jsonify(rows)
 
 @app.route('/api/vendors', methods=['GET', 'POST'])
-@login_required
 def handle_vendors():
     conn = get_db()
     c = conn.cursor()
@@ -637,7 +474,6 @@ def handle_vendors():
     return jsonify(rows)
 
 @app.route('/api/documents', methods=['GET', 'POST'])
-@login_required
 def handle_documents():
     conn = get_db()
     c = conn.cursor()
@@ -664,7 +500,6 @@ def handle_documents():
     return jsonify(rows)
 
 @app.route('/api/wizard_data', methods=['GET'])
-@login_required
 def wizard_data():
     conn = get_db()
     c = conn.cursor()
@@ -684,8 +519,10 @@ def wizard_data():
     return jsonify({"departments": depts, "faculty": facs, "studies": studies, "users": users})
 
 @app.route('/api/usage', methods=['GET', 'POST'])
-@login_required
 def handle_usage():
+    if 'user' not in session:
+        return jsonify({"status": "error", "message": "Unauthorized. Please log in again."}), 401
+
     conn = get_db()
     c = conn.cursor()
     if request.method == 'POST':
@@ -746,8 +583,10 @@ def handle_usage():
     return jsonify(rows)
 
 @app.route('/api/history', methods=['GET', 'POST'])
-@login_required
 def handle_history():
+    if 'user' not in session:
+        return jsonify({"status": "error", "message": "Unauthorized. Please log in again."}), 401
+
     conn = get_db()
     c = conn.cursor()
     
@@ -783,13 +622,11 @@ def handle_history():
 from flask import send_file
 
 @app.route('/api/export_db', methods=['GET'])
-@admin_required
 def export_db():
     stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
     return send_file(DB_PATH, as_attachment=True, download_name=f'easybiovibe-backup-{stamp}.db')
 
 @app.route('/api/import_db', methods=['POST'])
-@admin_required
 def import_db():
     f = request.files.get('dbfile')
     if not f:
