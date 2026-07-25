@@ -1,14 +1,9 @@
-"""Generates the EasyBioVibe-IMS app icon from the amplification-curve brand mark.
-Draws at 4x supersampling for clean anti-aliased edges, then downsamples.
-Produces: icon_master.png (1024), icon.ico (multi-size, Windows), and
-individual PNGs for Linux desktop-icon theming.
-"""
 from PIL import Image, ImageDraw
 import math
 import os
 
 OUT = os.path.dirname(os.path.abspath(__file__))
-SS = 4  # supersample factor
+SS = 4
 SIZE = 256 * SS
 
 INK = (18, 24, 32)
@@ -35,7 +30,6 @@ def rounded_gradient_bg(size, corner_ratio=0.22):
     return img
 
 def sigmoid_points(size, n=200):
-    # Amplification-curve shape: flat baseline -> steep rise -> plateau
     margin = size * 0.20
     x0, x1 = margin, size - margin
     y_top, y_bottom = size * 0.24, size * 0.72

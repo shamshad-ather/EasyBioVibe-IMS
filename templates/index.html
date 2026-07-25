@@ -1514,10 +1514,6 @@ async function logHistory(entity, entityCode, field, oldVal, newVal) {
     }
 }
 
-// Compares newFields (a plain object of {FieldLabel: newValue}) against the
-// matching properties on oldItem, and logs one History_Logs row per field
-// that actually changed. Pass oldItem=null for brand-new records to log a
-// single "(created)" entry instead of a field-by-field diff.
 async function logChangedFields(entity, entityCode, oldItem, newFields) {
     if (!oldItem) {
         const summary = Object.values(newFields)[0] || entityCode;
