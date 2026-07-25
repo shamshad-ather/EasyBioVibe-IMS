@@ -1,0 +1,125 @@
+name: Build EasyBioVibe-IMS
+
+# Push a tag like "v2026.07.03" to build + publish installers for all three OSes.
+# Manual "Run workflow" also builds artifacts without publishing a release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate icon assets
+        run: python assets/make_icon.py
+
+      # ---------------- Windows ----------------
+      - name: Build exe (Windows)
+        if: matrix.os == 'windows-latest'
+        run: >
+          pyinstaller --onefile --windowed --name EasyBioVibe-IMS
+          --icon assets/icon.ico
+          --add-data "templates;templates"
+          --add-data "assets;assets"
+          --add-data "static;static"
+          --hidden-import flask_bcrypt
+          launcher.py
+
+      - name: Build installer (Inno Setup, preinstalled on windows-latest)
+        if: matrix.os == 'windows-latest'
+        run: '"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\windows\installer.iss'
+
+      - name: Upload Windows installer
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: EasyBioVibe-IMS-Windows-Installer
+          path: packaging/windows/Output/*.exe
+
+      # ---------------- macOS ----------------
+      - name: Build .app (macOS)
+        if: matrix.os == 'macos-latest'
+        run: >
+          pyinstaller --onefile --windowed --name EasyBioVibe-IMS
+          --icon assets/icon.ico
+          --add-data "templates:templates"
+          --add-data "assets:assets"
+          --add-data "static:static"
+          --hidden-import flask_bcrypt
+          launcher.py
+
+      - name: Package .app into .dmg
+        if: matrix.os == 'macos-latest'
+        run: |
+          mkdir -p dist/dmg
+          cp -R "dist/EasyBioVibe-IMS.app" dist/dmg/
+          ln -s /Applications dist/dmg/Applications
+          hdiutil create -volname "EasyBioVibe-IMS" -srcfolder dist/dmg -ov -format UDZO dist/EasyBioVibe-IMS.dmg
+
+      - name: Upload macOS dmg
+        if: matrix.os == 'macos-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: EasyBioVibe-IMS-macOS
+          path: dist/EasyBioVibe-IMS.dmg
+
+      # ---------------- Linux ----------------
+      - name: Build binary (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: >
+          pyinstaller --onefile --name EasyBioVibe-IMS
+          --icon assets/icon.ico
+          --add-data "templates:templates"
+          --add-data "assets:assets"
+          --add-data "static:static"
+          --hidden-import flask_bcrypt
+          launcher.py
+
+      - name: Assemble Linux release folder
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          mkdir -p release/EasyBioVibe-IMS-linux
+          cp dist/EasyBioVibe-IMS release/EasyBioVibe-IMS-linux/
+          cp assets/icon_256.png release/EasyBioVibe-IMS-linux/
+          cp packaging/linux/easybiovibe-ims.desktop release/EasyBioVibe-IMS-linux/
+          cp packaging/linux/install.sh release/EasyBioVibe-IMS-linux/
+          cp packaging/linux/uninstall.sh release/EasyBioVibe-IMS-linux/
+          chmod +x release/EasyBioVibe-IMS-linux/EasyBioVibe-IMS release/EasyBioVibe-IMS-linux/install.sh release/EasyBioVibe-IMS-linux/uninstall.sh
+          tar -czf EasyBioVibe-IMS-linux.tar.gz -C release EasyBioVibe-IMS-linux
+
+      - name: Upload Linux tarball
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: EasyBioVibe-IMS-Linux
+          path: EasyBioVibe-IMS-linux.tar.gz
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Publish GitHub Release with all three installers
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/EasyBioVibe-IMS-Windows-Installer/*.exe
+            artifacts/EasyBioVibe-IMS-macOS/*.dmg
+            artifacts/EasyBioVibe-IMS-Linux/*.tar.gz

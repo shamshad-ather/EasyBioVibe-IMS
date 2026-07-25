@@ -1,0 +1,7 @@
+build/
+dist/
+*.spec
+__pycache__/
+packaging/windows/Output/
+easylab_database.db
+easybiovibe.db

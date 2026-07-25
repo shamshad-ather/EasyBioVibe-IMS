@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=EasyBioVibe-IMS
+Comment=Inventory management for molecular biology / RT-qPCR labs
+Exec=REPLACED_AT_INSTALL_TIME
+Icon=easybiovibe-ims
+Terminal=false
+Categories=Science;Office;
+StartupNotify=true
