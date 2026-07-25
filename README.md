@@ -1,6 +1,6 @@
 # EasyBioVibe-IMS 🧬
 
-**Central Lab Inventory Management System**
+**Lab Inventory Management System**
 
 EasyBioVibe-IMS is a lightweight, cross-platform Inventory Management System built for modern research laboratories. It provides a secure, offline-first local database to track materials, physical batches, and usage consumption across different departments, faculty, and research studies.
 
