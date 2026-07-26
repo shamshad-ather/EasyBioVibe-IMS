@@ -28,7 +28,7 @@ You do not need to install Python or any dependencies to run this application. P
 
 If you wish to contribute to the code or build the executables yourself, this project uses Python, Flask, HTML/CSS/JS, and PyInstaller.
 
-Please refer to the [`packaging.md`](packaging.md) file for comprehensive instructions on setting up your environment, running the developer server, and compiling the standalone binaries.
+Please refer to the [`PACKAGING.md`](packaging.md) file for comprehensive instructions on setting up your environment, running the developer server, and compiling the standalone binaries.
 
 ---
 *Vibed using Gemini and Claude*
