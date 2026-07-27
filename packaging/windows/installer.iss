@@ -4,7 +4,7 @@
 ; matters on shared/institutional lab PCs where staff may not have admin.
 
 #define MyAppName "EasyBioVibe-IMS"
-#define MyAppVersion "2026.07.03"
+#define MyAppVersion "2026.07.05"
 #define MyAppExeName "EasyBioVibe-IMS.exe"
 
 [Setup]
