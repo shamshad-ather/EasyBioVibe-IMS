@@ -3166,6 +3166,11 @@ function attachTableSort() {
 // ==================== INITIALIZATION ====================
 document.addEventListener('DOMContentLoaded', async function() {
     await checkSystemStatus(); 
+    
+    // Heartbeat: Ping the server every 5 seconds to keep it alive
+    setInterval(() => {
+        fetch('/api/ping', { method: 'POST' }).catch(() => {});
+    }, 5000);
 });
 </script>
 </body>

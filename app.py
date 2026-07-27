@@ -7,6 +7,9 @@ import os
 import sys
 import secrets
 from pathlib import Path
+import time
+import threading
+import signal
 
 def resource_path(relative):
     base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
@@ -805,7 +808,30 @@ def import_db():
     f.save(DB_PATH)
     return jsonify({"status": "success", "message": "Database imported. Restart EasyBio.Vibe for it to take effect."})
 
+# ==================== PING SHUTDOWN ====================
+LAST_PING = time.time()
+
+@app.route('/api/ping', methods=['POST'])
+def ping():
+    global LAST_PING
+    LAST_PING = time.time()
+    return jsonify({"status": "ok"})
+
+def monitor_heartbeat():
+    # Give the server 10 seconds to boot up and load the initial UI
+    time.sleep(10)
+    while True:
+        time.sleep(5)
+        # If 15 seconds pass without a ping from the browser, shut down
+        if time.time() - LAST_PING > 15:
+            print("Window closed. Shutting down server to free port...")
+            os.kill(os.getpid(), signal.SIGTERM)
 
 if __name__ == '__main__':
     frozen = getattr(sys, 'frozen', False)
+    
+    # Start the background monitor thread
+    monitor_thread = threading.Thread(target=monitor_heartbeat, daemon=True)
+    monitor_thread.start()
+    
     app.run(debug=not frozen, use_reloader=not frozen, host='127.0.0.1', port=5000)
