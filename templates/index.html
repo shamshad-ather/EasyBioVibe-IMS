@@ -320,7 +320,7 @@ textarea.form-control{min-height:80px;resize:vertical}
         <span>EasyBioVibe-IMS v2026.07.04 | Vibed By Shamshad Ather</span>
     </div>
 
-    <div class="modal-overlay" id="modalOverlay" onclick="closeModal(event)">
+    <div class="modal-overlay" id="modalOverlay">
         <div class="modal" id="modalContent" onclick="event.stopPropagation()"></div>
     </div>
 </div>
@@ -868,6 +868,8 @@ function navigateTo(page, params) {
 }
 
 function renderCurrentPage() {
+    const activeElement = document.activeElement;
+    const activeId = activeElement ? activeElement.id : null;
     const content = document.getElementById('mainContent');
     switch(currentPage) {
         case 'home': renderHome(content); break;
@@ -886,7 +888,19 @@ function renderCurrentPage() {
         case 'history': renderHistoryLog(content); break;
         case 'reports': renderReports(content); break;
         case 'settings': renderSettings(content); break;
+        case 'globalUsage': renderGlobalUsage(content); break;
     }
+    
+    if (activeId) {
+        const el = document.getElementById(activeId);
+        if (el && el.tagName === 'INPUT') {
+            el.focus();
+            const len = el.value.length;
+            if (el.setSelectionRange) el.setSelectionRange(len, len); // Keeps cursor at the end of the text
+        }
+    }
+
+    setTimeout(attachTableSort, 50);
 }
 
 // ==================== HOME ====================
@@ -921,19 +935,19 @@ function renderHome(content) {
         </div>
         
         <div class="stats-grid" style="max-width:900px;margin:0 auto;">
-            <div class="stat-card">
+            <div class="stat-card" style="cursor:pointer; transition:all 0.2s;" onmouseover="this.style.borderColor='var(--primary)'" onmouseout="this.style.borderColor='var(--gray-200)'" onclick="navigateTo('inventory')">
                 <div class="label">Total Materials</div>
                 <div class="value">${DB.inventory.length}</div>
             </div>
-            <div class="stat-card">
+            <div class="stat-card" style="cursor:pointer; transition:all 0.2s;" onmouseover="this.style.borderColor='var(--primary)'" onmouseout="this.style.borderColor='var(--gray-200)'" onclick="navigateTo('batches')">
                 <div class="label">Active Batches</div>
                 <div class="value">${DB.batches.filter(b=>b.Status==='Active').length}</div>
             </div>
-            <div class="stat-card">
+            <div class="stat-card" style="cursor:pointer; transition:all 0.2s;" onmouseover="this.style.borderColor='var(--primary)'" onmouseout="this.style.borderColor='var(--gray-200)'" onclick="navigateTo('globalUsage')">
                 <div class="label">Usage Records</div>
                 <div class="value">${DB.usage.length}</div>
             </div>
-            <div class="stat-card">
+            <div class="stat-card" style="cursor:pointer; transition:all 0.2s;" onmouseover="this.style.borderColor='var(--danger)'" onmouseout="this.style.borderColor='var(--gray-200)'" onclick="renderReport('lowStock')">
                 <div class="label">Low Stock Alerts</div>
                 <div class="value alert">${DB.inventory.filter(i=>getAlertStatus(i.id)==='low').length}</div>
             </div>
@@ -1341,7 +1355,6 @@ function renderStudyInventory(content) {
                     <thead>
                         <tr>
                             <th>SN</th>
-                            <th>Code</th>
                             <th>Name; Make; Model</th>
                             <th>Global Stock</th>
                             <th>Total Used (This Study)</th>
@@ -1359,7 +1372,6 @@ function renderStudyInventory(content) {
                             return `
                             <tr>
                                 <td>${idx + 1}</td>
-                                <td><span class="code-display">${item.InventoryCode}</span></td>
                                 <td>
                                     <div style="font-weight:600;">${escapeHtml(item.MaterialName)}</div>
                                     <div style="font-size:12px;color:var(--gray-500);">${escapeHtml(item.Make)} ${item.Model ? '| ' + escapeHtml(item.Model) : ''}</div>
@@ -1407,11 +1419,10 @@ function showMaterialHistory(inventoryId) {
             </div>
             <h4 style="margin-bottom:12px;font-size:14px;">Active Batches</h4>
             <table class="data-table" style="margin-bottom:24px;font-size:12px;">
-                <thead><tr><th>Batch</th><th>Lot</th><th>Expiry</th><th>Received</th><th>Remaining</th></tr></thead>
+                <thead><tr><th>SN</th><th>Batch</th><th>Lot</th><th>Expiry</th><th>Received</th><th>Remaining</th></tr></thead>
                 <tbody>
                     ${batches.map(b => `
                         <tr>
-                            <td>${b.BatchCode}</td>
                             <td>${escapeHtml(b.LotNumber)}</td>
                             <td>${formatDate(b.ExpiryDate)}</td>
                             <td>${b.QuantityReceived} ${b.Unit}</td>
@@ -1484,10 +1495,7 @@ async function logHistory(entity, entityCode, field, oldVal, newVal) {
     }
 }
 
-// Compares newFields (a plain object of {FieldLabel: newValue}) against the
-// matching properties on oldItem, and logs one History_Logs row per field
-// that actually changed. Pass oldItem=null for brand-new records to log a
-// single "(created)" entry instead of a field-by-field diff.
+
 async function logChangedFields(entity, entityCode, oldItem, newFields) {
     if (!oldItem) {
         const summary = Object.values(newFields)[0] || entityCode;
@@ -1598,12 +1606,11 @@ function renderFaculty(content) {
         <div class="card">
             <div class="table-container">
                 <table class="data-table">
-                    <thead><tr><th>Code</th><th>Name</th><th>Department</th><th>Status</th>${isAdmin()?'<th>Actions</th>':''}</tr></thead>
+                    <thead><tr><th>SN</th><th>Name</th><th>Department</th><th>Status</th>${isAdmin()?'<th>Actions</th>':''}</tr></thead>
                     <tbody>
-                        ${items.map(f => {
-                            const dept = getLookup(f.DepartmentID, 'departments');
+                        ${items.map((f, idx) => {                            const dept = getLookup(f.DepartmentID, 'departments');
                             return `<tr>
-                                <td><span class="code-display">${f.FacultyCode}</span></td>
+                                <td>${idx + 1}</td>
                                 <td>${escapeHtml(f.FacultyName)}</td>
                                 <td>${dept ? escapeHtml(dept.DepartmentName) : 'N/A'}</td>
                                 <td><span class="badge ${f.Status==='Active'?'badge-success':'badge-gray'}">${f.Status}</span></td>
@@ -1722,13 +1729,13 @@ function renderStudies(content) {
         <div class="card">
             <div class="table-container">
                 <table class="data-table">
-                    <thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Faculty</th><th>Department</th><th>Status</th>${isAdmin()?'<th>Actions</th>':''}</tr></thead>
+                    <thead><tr><th>SN</th><th>Name</th><th>Type</th><th>Faculty</th><th>Department</th><th>Status</th>${isAdmin()?'<th>Actions</th>':''}</tr></thead>
                     <tbody>
-                        ${items.map(s => {
+                        ${items.map((s, idx) => {
                             const fac = getLookup(s.FacultyID, 'faculty');
                             const dept = getLookup(s.DepartmentID, 'departments');
                             return `<tr>
-                                <td><span class="code-display">${s.StudyCode}</span></td>
+                                <td>${idx + 1}</td>
                                 <td>${escapeHtml(s.StudyName)}</td>
                                 <td><span class="badge badge-info">${s.StudyType}</span></td>
                                 <td>${fac?escapeHtml(fac.FacultyName):'N/A'}</td>
@@ -1873,16 +1880,16 @@ function renderUsers(content) {
         <div class="card">
             <div class="table-container">
                 <table class="data-table">
-                    <thead><tr><th>Code</th><th>Name</th><th>Designation</th><th>Assigned Studies</th><th>Role</th><th>Status</th>${isAdmin()?'<th>Actions</th>':''}</tr></thead>
+                    <thead><tr><th>SN</th><th>Name</th><th>Designation</th><th>Assigned Studies</th><th>Role</th><th>Status</th>${isAdmin()?'<th>Actions</th>':''}</tr></thead>
                     <tbody>
-                        ${items.map(u => {
+                        ${items.map((u, idx) => {
                             const isAll = u.StudyIDs && u.StudyIDs.includes('ALL');
                             const studyDisplay = isAll
                                 ? '<span class="badge badge-info">All Studies</span>'
                                 : (u.StudyIDs || []).map(id => getLookup(id, 'studies')?.StudyName).filter(Boolean).map(escapeHtml).join(', ') || 'None';
 
                             return `<tr>
-                                <td><span class="code-display">${u.UserCode}</span></td>
+                                <td>${idx + 1}</td>
                                 <td>${escapeHtml(u.UserName)}</td>
                                 <td><span class="badge badge-gray">${u.Designation}</span></td>
                                 <td>${studyDisplay}</td>
@@ -2087,13 +2094,13 @@ async function renderInventory(content) {
         <div class="card">
             <div class="table-container">
                 <table class="data-table">
-                    <thead><tr><th>Code</th><th>Material</th><th>Department</th><th>Type</th><th>Unit</th><th>Stock</th><th>Alert</th><th>Actions</th></tr></thead>
+                    <thead><tr><th>SN</th><th>Material</th><th>Department</th><th>Type</th><th>Unit</th><th>Stock</th><th>Alert</th><th>Actions</th></tr></thead>
                     <tbody>
-                        ${items.map(i => {
+                        ${items.map((i, idx) => {
                             const dept = getLookup(i.DepartmentID, 'departments');
                             const total = getInventoryTotalQty(i.id);
                             return `<tr>
-                                <td><span class="code-display">${i.InventoryCode}</span></td>
+                                <td>${idx + 1}</td>
                                 <td>
                                     <div style="font-weight:600;">${escapeHtml(i.MaterialName)}</div>
                                     <div style="font-size:11px;color:var(--gray-500);">${escapeHtml(i.Make)} ${i.Model?'| '+escapeHtml(i.Model):''}</div>
@@ -2245,9 +2252,16 @@ async function saveInventory(e) {
 function renderBatches(content) {
     const search = (document.getElementById('searchBatch')?.value || '').toLowerCase();
     const filterInv = document.getElementById('filterBatchInv')?.value || '';
+    const fromDate = document.getElementById('batchFrom')?.value || '';
+    const toDate = document.getElementById('batchTo')?.value || '';
+    
     let items = DB.batches;
     if (search) items = items.filter(b => b.BatchCode.toLowerCase().includes(search) || b.LotNumber.toLowerCase().includes(search) || b.PurchaseOrderNo.toLowerCase().includes(search));
     if (filterInv) items = items.filter(b => b.InventoryID === filterInv);
+    
+    // Date Filtering Logic (Filtering by Expiry Date)
+    if (fromDate) items = items.filter(b => b.ExpiryDate >= fromDate);
+    if (toDate) items = items.filter(b => b.ExpiryDate <= toDate);
 
     content.innerHTML = `
         <h1 class="page-title">Batch Management</h1>
@@ -2261,21 +2275,29 @@ function renderBatches(content) {
                 <option value="">All Materials</option>
                 ${DB.inventory.filter(i=>i.Status==='Active').map(i=>`<option value="${i.id}" ${filterInv===i.id?'selected':''}>${escapeHtml(i.MaterialName)}</option>`).join('')}
             </select>
+            <div style="display:flex;align-items:center;gap:6px;">
+                <span style="font-size:12px;color:var(--gray-500);font-weight:600;">FROM</span>
+                <input type="date" class="form-control" id="batchFrom" value="${fromDate}" onchange="renderCurrentPage()">
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+                <span style="font-size:12px;color:var(--gray-500);font-weight:600;">TO</span>
+                <input type="date" class="form-control" id="batchTo" value="${toDate}" onchange="renderCurrentPage()">
+            </div>
             <button class="btn btn-primary" onclick="openBatchModal()"><svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg> Add Batch</button>
         </div>
         <div class="card">
             <div class="table-container">
                 <table class="data-table">
-                    <thead><tr><th>Code</th><th>Material</th><th>PO No</th><th>Lot</th><th>Expiry</th><th>Received</th><th>Current</th><th>Status</th><th>Actions</th></tr></thead>
+                    <thead><tr><th>SN</th><th>Material</th><th>PO No</th><th>Lot</th><th>Expiry</th><th>Received</th><th>Current</th><th>Status</th><th>Actions</th></tr></thead>
                     <tbody>
-                        ${items.map(b => {
+                        ${items.map((b, idx) => {
                             const inv = getLookup(b.InventoryID, 'inventory');
                             const exp = new Date(b.ExpiryDate);
                             const today = new Date();
                             const daysLeft = Math.ceil((exp - today) / (1000*60*60*24));
                             const expClass = daysLeft <= 30 ? 'low' : daysLeft <= 90 ? 'warning' : '';
                             return `<tr>
-                                <td><span class="code-display">${b.BatchCode}</span></td>
+                                <td>${idx + 1}</td>
                                 <td>${inv?escapeHtml(inv.MaterialName):'N/A'}</td>
                                 <td>${escapeHtml(b.PurchaseOrderNo)}</td>
                                 <td>${escapeHtml(b.LotNumber)}</td>
@@ -2426,10 +2448,9 @@ function renderVendors(content) {
         <div class="card">
             <div class="table-container">
                 <table class="data-table">
-                    <thead><tr><th>Code</th><th>Vendor Name</th><th>Contact</th><th>Remarks</th>${isAdmin()?'<th>Actions</th>':''}</tr></thead>
+                    <thead><tr><th>Vendor Name</th><th>Contact</th><th>Remarks</th>${isAdmin()?'<th>Actions</th>':''}</tr></thead>
                     <tbody>
-                        ${items.map(v => `<tr>
-                            <td><span class="code-display">${v.VendorCode}</span></td>
+                        ${items.map((v, idx) => `<tr>
                             <td>${escapeHtml(v.VendorName)}</td>
                             <td>${escapeHtml(v.ContactNumber)}</td>
                             <td>${escapeHtml(v.Remarks)}</td>
@@ -2656,19 +2677,117 @@ async function saveDocument(e) {
     }
 }
 
+// ==================== GLOBAL USAGE LOG ====================
+function renderGlobalUsage(content) {
+    const search = (document.getElementById('searchUsage')?.value || '').toLowerCase();
+    const fromDate = document.getElementById('usageFrom')?.value || '';
+    const toDate = document.getElementById('usageTo')?.value || '';
+    
+    let items = [...DB.usage].sort((a,b) => new Date(b.UsageDate) - new Date(a.UsageDate));
+    
+    if (search) {
+        items = items.filter(u => {
+            const inv = getLookup(u.InventoryID, 'inventory');
+            const user = getLookup(u.UserID, 'users');
+            return (inv && inv.MaterialName.toLowerCase().includes(search)) || 
+                   (user && user.UserName.toLowerCase().includes(search)) ||
+                   u.BatchCode.toLowerCase().includes(search);
+        });
+    }
+    
+    if (fromDate) items = items.filter(u => u.UsageDate >= fromDate);
+    if (toDate) items = items.filter(u => u.UsageDate <= toDate);
+
+    content.innerHTML = `
+        <div class="breadcrumb">
+            <a href="#" onclick="navigateTo('home')">Home</a>
+            <span class="sep">/</span>
+            <span class="current">Global Usage Records</span>
+        </div>
+        <h1 class="page-title">Usage Records</h1>
+        <p class="page-subtitle">Complete log of all material consumption</p>
+        
+        <div class="filters-bar">
+            <div class="search-box" style="max-width:300px;">
+                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                <input type="text" class="form-control" id="searchUsage" placeholder="Search material, user, batch..." value="${escapeHtml(search)}" oninput="renderCurrentPage()">
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+                <span style="font-size:12px;color:var(--gray-500);font-weight:600;">FROM</span>
+                <input type="date" class="form-control" id="usageFrom" value="${fromDate}" onchange="renderCurrentPage()">
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+                <span style="font-size:12px;color:var(--gray-500);font-weight:600;">TO</span>
+                <input type="date" class="form-control" id="usageTo" value="${toDate}" onchange="renderCurrentPage()">
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="table-container">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>SN</th>
+                            <th>Date & Time</th>
+                            <th>Material Detail</th>
+                            <th>Batch</th>
+                            <th>Used By</th>
+                            <th>Recorded By</th>
+                            <th>Study</th>
+                            <th>Qty Used</th>
+                            <th>Balance</th>
+                            <th>Remarks</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${items.map((u, idx) => {
+                            const inv = getLookup(u.InventoryID, 'inventory');
+                            const user = getLookup(u.UserID, 'users');
+                            const study = getLookup(u.StudyID, 'studies');
+                            const balanceLabel = (u.Balance !== null && u.Balance !== undefined) ? (u.Balance + ' ' + u.Unit) : 'N/A';
+                            
+                            return `<tr>
+                                <td>${idx + 1}</td>
+                                <td>${formatDate(u.UsageDate)}<br><span style="font-size:11px;color:var(--gray-400);">${u.UsageTime}</span></td>
+                                <td>
+                                    <div style="font-weight:600;">${inv ? escapeHtml(inv.MaterialName) : 'N/A'}</div>
+                                    <div style="font-size:11px;color:var(--gray-500);">${inv ? escapeHtml(inv.Make) + (inv.Model ? ' | ' + escapeHtml(inv.Model) : '') : ''}</div>
+                                </td>
+                                <td><span class="code-display">${escapeHtml(u.BatchCode)}</span></td>
+                                <td>${user ? escapeHtml(user.UserName) : 'N/A'}</td>
+                                <td><span class="badge badge-gray">${escapeHtml(u.RecordedBy)}</span></td>
+                                <td>${study ? escapeHtml(study.StudyName) : 'N/A'}</td>
+                                <td class="qty-display">${u.QuantityUsed} ${u.Unit}</td>
+                                <td class="qty-display">${balanceLabel}</td>
+                                <td>${escapeHtml(u.Remarks)}</td>
+                            </tr>`;
+                        }).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    `;
+}
 // ==================== HISTORY LOG ====================
 function renderHistoryLog(content) {
     const search = (document.getElementById('searchHist')?.value || '').toLowerCase();
     const filterEntity = document.getElementById('filterHistEntity')?.value || '';
+    const fromDate = document.getElementById('histFrom')?.value || '';
+    const toDate = document.getElementById('histTo')?.value || '';
+    
     let items = [...DB.historyLog].sort((a,b) => new Date(b.ChangedDate) - new Date(a.ChangedDate));
     if (search) items = items.filter(h => h.Entity.toLowerCase().includes(search) || h.EntityCode.toLowerCase().includes(search));
     if (filterEntity) items = items.filter(h => h.Entity === filterEntity);
+    
+    // Date Filtering Logic (Filtering by Date Changed)
+    if (fromDate) items = items.filter(h => h.ChangedDate.split(' ')[0] >= fromDate);
+    if (toDate) items = items.filter(h => h.ChangedDate.split(' ')[0] <= toDate);
 
     content.innerHTML = `
         <h1 class="page-title">History Log</h1>
         <p class="page-subtitle">Audit trail of all changes</p>
         <div class="filters-bar">
-            <div class="search-box" style="max-width:300px;">
+            <div class="search-box" style="max-width:250px;">
                 <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
                 <input type="text" class="form-control" id="searchHist" placeholder="Search history..." value="${escapeHtml(search)}" oninput="renderCurrentPage()">
             </div>
@@ -2682,22 +2801,49 @@ function renderHistoryLog(content) {
                 <option value="Batch" ${filterEntity==='Batch'?'selected':''}>Batch</option>
                 <option value="Usage" ${filterEntity==='Usage'?'selected':''}>Usage</option>
             </select>
+            <div style="display:flex;align-items:center;gap:6px;">
+                <span style="font-size:12px;color:var(--gray-500);font-weight:600;">FROM</span>
+                <input type="date" class="form-control" id="histFrom" value="${fromDate}" onchange="renderCurrentPage()">
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+                <span style="font-size:12px;color:var(--gray-500);font-weight:600;">TO</span>
+                <input type="date" class="form-control" id="histTo" value="${toDate}" onchange="renderCurrentPage()">
+            </div>
         </div>
         <div class="card">
             <div class="table-container">
                 <table class="data-table">
-                    <thead><tr><th>Code</th><th>Entity</th><th>Entity Code</th><th>Field</th><th>Old Value</th><th>New Value</th><th>Changed By</th><th>Date</th></tr></thead>
+                    <thead><tr><th>SN</th><th>Code</th><th>Entity</th><th>Entity Info</th><th>Field</th><th>Old Value</th><th>New Value</th><th>Changed By</th><th>Date</th></tr></thead>
                     <tbody>
-                        ${items.map(h => `<tr>
-                            <td><span class="code-display">${h.HistoryCode}</span></td>
-                            <td><span class="badge badge-gray">${h.Entity}</span></td>
-                            <td>${h.EntityCode}</td>
-                            <td>${escapeHtml(h.FieldChanged)}</td>
-                            <td style="color:var(--gray-500);font-size:12px;">${escapeHtml(h.OldValue)}</td>
-                            <td style="color:var(--success);font-size:12px;font-weight:500;">${escapeHtml(h.NewValue)}</td>
-                            <td>${escapeHtml(h.ChangedBy)}</td>
-                            <td>${formatDate(h.ChangedDate)}</td>
-                        </tr>`).join('')}
+                        ${items.map((h, idx) => {
+                            // Translate raw DB codes back into human names for the UI
+                            let displayName = h.EntityCode;
+                            if (h.Entity === 'Department' && displayName.startsWith('DEP')) {
+                                const d = DB.departments.find(x => x.DepartmentCode === displayName);
+                                if(d) displayName = d.DepartmentName;
+                            } else if (h.Entity === 'Faculty' && displayName.startsWith('FAC')) {
+                                const f = DB.faculty.find(x => x.FacultyCode === displayName);
+                                if(f) displayName = f.FacultyName;
+                            } else if (h.Entity === 'Inventory' && displayName.startsWith('INV')) {
+                                const i = DB.inventory.find(x => x.InventoryCode === displayName);
+                                if(i) displayName = i.MaterialName;
+                            } else if (h.Entity === 'Study' && displayName.startsWith('STD')) {
+                                const s = DB.studies.find(x => x.StudyCode === displayName);
+                                if(s) displayName = s.StudyName;
+                            }
+                            
+                            return `<tr>
+                                <td>${idx + 1}</td>
+                                <td><span class="code-display">${h.HistoryCode}</span></td>
+                                <td><span class="badge badge-gray">${h.Entity}</span></td>
+                                <td><span style="font-weight:500;">${escapeHtml(displayName)}</span></td>
+                                <td>${escapeHtml(h.FieldChanged)}</td>
+                                <td style="color:var(--gray-500);font-size:12px;">${escapeHtml(h.OldValue)}</td>
+                                <td style="color:var(--success);font-size:12px;font-weight:500;">${escapeHtml(h.NewValue)}</td>
+                                <td>${escapeHtml(h.ChangedBy)}</td>
+                                <td>${formatDate(h.ChangedDate)}</td>
+                            </tr>`;
+                        }).join('')}
                     </tbody>
                 </table>
             </div>
@@ -2770,13 +2916,14 @@ function renderReport(type) {
                     <div class="card-header"><h2>Current Stock Report</h2><button class="btn btn-sm btn-secondary" onclick="window.print()">Print</button></div>
                     <div class="card-body">
                         <table class="data-table">
-                            <thead><tr><th>Code</th><th>Material</th><th>Type</th><th>Total Received</th><th>Current Qty</th><th>Used</th><th>Unit</th><th>Alert</th></tr></thead>
+                            <thead><tr><th>SN</th><th>Code</th><th>Material</th><th>Type</th><th>Total Received</th><th>Current Qty</th><th>Used</th><th>Unit</th><th>Alert</th></tr></thead>
                             <tbody>
-                                ${stockItems.map(i => {
+                                ${stockItems.map((i, idx) => { // <-- Added (i, idx) here
                                     const totalRec = getInventoryTotalReceived(i.id);
                                     const totalCur = getInventoryTotalQty(i.id);
                                     const used = totalRec - totalCur;
                                     return `<tr>
+                                        <td>${idx + 1}</td>
                                         <td><span class="code-display">${i.InventoryCode}</span></td>
                                         <td>${escapeHtml(i.MaterialName)}<br><span style="font-size:11px;color:var(--gray-500);">${escapeHtml(i.Make)}</span></td>
                                         <td><span class="badge badge-gray">${i.MaterialType}</span></td>
@@ -2801,11 +2948,12 @@ function renderReport(type) {
                     <div class="card-body">
                         ${lowItems.length === 0 ? '<div class="alert alert-success">All materials are above alert threshold</div>' : `
                         <table class="data-table">
-                            <thead><tr><th>Code</th><th>Material</th><th>Current Qty</th><th>Threshold</th><th>Unit</th><th>Batches</th></tr></thead>
+                            <thead><tr><th>SN</th><th>Code</th><th>Material</th><th>Current Qty</th><th>Threshold</th><th>Unit</th><th>Batches</th></tr></thead>
                             <tbody>
-                                ${lowItems.map(i => {
+                                ${lowItems.map((i, idx) => { // <-- Added (i, idx) here
                                     const batches = DB.batches.filter(b => b.InventoryID === i.id && b.Status === 'Active');
                                     return `<tr>
+                                        <td>${idx + 1}</td>
                                         <td><span class="code-display">${i.InventoryCode}</span></td>
                                         <td>${escapeHtml(i.MaterialName)}</td>
                                         <td class="qty-display low">${getInventoryTotalQty(i.id)}</td>
@@ -2833,14 +2981,15 @@ function renderReport(type) {
                     <div class="card-body">
                         ${expBatches.length === 0 ? '<div class="alert alert-success">No batches nearing expiration</div>' : `
                         <table class="data-table">
-                            <thead><tr><th>Batch</th><th>Material</th><th>Lot</th><th>Expiry</th><th>Days Left</th><th>Current Qty</th></tr></thead>
+                            <thead><tr><th>SN</th><th>Batch</th><th>Material</th><th>Lot</th><th>Expiry</th><th>Days Left</th><th>Current Qty</th></tr></thead>
                             <tbody>
-                                ${expBatches.map(b => {
+                                ${expBatches.map((b, idx) => { // <-- Added (b, idx) here
                                     const inv = getLookup(b.InventoryID, 'inventory');
                                     const exp = new Date(b.ExpiryDate);
                                     const daysLeft = Math.ceil((exp - today) / (1000*60*60*24));
                                     const cls = daysLeft <= 30 ? 'low' : 'warning';
                                     return `<tr>
+                                        <td>${idx + 1}</td>
                                         <td><span class="code-display">${b.BatchCode}</span></td>
                                         <td>${inv?escapeHtml(inv.MaterialName):'N/A'}</td>
                                         <td>${escapeHtml(b.LotNumber)}</td>
@@ -2866,12 +3015,13 @@ function renderReport(type) {
                     <div class="card-header"><h2>Study-wise Consumption Report</h2></div>
                     <div class="card-body">
                         <table class="data-table">
-                            <thead><tr><th>Study</th><th>Type</th><th>Total Records</th><th>Materials Used</th></tr></thead>
+                            <thead><tr><th>SN</th><th>Study</th><th>Type</th><th>Total Records</th><th>Materials Used</th></tr></thead>
                             <tbody>
-                                ${Object.entries(studyUsage).map(([studyId, usages]) => {
+                                ${Object.entries(studyUsage).map(([studyId, usages], idx) => { // <-- Added idx here
                                     const study = getLookup(studyId, 'studies');
                                     const materials = [...new Set(usages.map(u => u.InventoryID))].length;
                                     return `<tr>
+                                        <td>${idx + 1}</td>
                                         <td>${study?escapeHtml(study.StudyName):'N/A'}</td>
                                         <td><span class="badge badge-info">${study?study.StudyType:'N/A'}</span></td>
                                         <td>${usages.length}</td>
@@ -2895,13 +3045,14 @@ function renderReport(type) {
                     <div class="card-header"><h2>Faculty-wise Consumption Report</h2></div>
                     <div class="card-body">
                         <table class="data-table">
-                            <thead><tr><th>Faculty</th><th>Department</th><th>Total Records</th><th>Materials Used</th></tr></thead>
+                            <thead><tr><th>SN</th><th>Faculty</th><th>Department</th><th>Total Records</th><th>Materials Used</th></tr></thead>
                             <tbody>
-                                ${Object.entries(facUsage).map(([facId, usages]) => {
+                                ${Object.entries(facUsage).map(([facId, usages], idx) => { // <-- Added idx here
                                     const fac = getLookup(facId, 'faculty');
                                     const dept = fac ? getLookup(fac.DepartmentID, 'departments') : null;
                                     const materials = [...new Set(usages.map(u => u.InventoryID))].length;
                                     return `<tr>
+                                        <td>${idx + 1}</td>
                                         <td>${fac?escapeHtml(fac.FacultyName):'N/A'}</td>
                                         <td>${dept?escapeHtml(dept.DepartmentName):'N/A'}</td>
                                         <td>${usages.length}</td>
@@ -2925,13 +3076,14 @@ function renderReport(type) {
                     <div class="card-header"><h2>Department-wise Consumption Report</h2></div>
                     <div class="card-body">
                         <table class="data-table">
-                            <thead><tr><th>Department</th><th>Total Records</th><th>Materials Used</th><th>Users</th></tr></thead>
+                            <thead><tr><th>SN</th><th>Department</th><th>Total Records</th><th>Materials Used</th><th>Users</th></tr></thead>
                             <tbody>
-                                ${Object.entries(deptUsage).map(([deptId, usages]) => {
+                                ${Object.entries(deptUsage).map(([deptId, usages], idx) => { // <-- Added idx here
                                     const dept = getLookup(deptId, 'departments');
                                     const materials = [...new Set(usages.map(u => u.InventoryID))].length;
                                     const users = [...new Set(usages.map(u => u.UserID))].length;
                                     return `<tr>
+                                        <td>${idx + 1}</td>
                                         <td>${dept?escapeHtml(dept.DepartmentName):'N/A'}</td>
                                         <td>${usages.length}</td>
                                         <td>${materials}</td>
@@ -2947,6 +3099,70 @@ function renderReport(type) {
     }
 }
 
+
+function attachTableSort() {
+    document.querySelectorAll('.data-table th').forEach(th => {
+        if(th.textContent.trim().toLowerCase() === 'actions') return; // Skip action buttons
+        
+        th.style.cursor = 'pointer';
+        th.style.userSelect = 'none';
+        
+        // Add default arrows if not already there
+        if(!th.querySelector('.sort-icon')) {
+            th.innerHTML += ' <span class="sort-icon" style="font-size:10px; opacity:0.3; margin-left:4px;">&#x2195;</span>';
+        }
+
+        th.onclick = function() {
+            const table = th.closest('table');
+            const tbody = table.querySelector('tbody');
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+            if(rows.length === 0 || (rows.length === 1 && rows[0].innerText.includes('No '))) return;
+
+            const index = Array.from(th.parentNode.children).indexOf(th);
+            const isAscending = th.classList.contains('sort-asc');
+            
+            // Reset all headers
+            table.querySelectorAll('th').forEach(h => {
+                h.classList.remove('sort-asc', 'sort-desc');
+                const icon = h.querySelector('.sort-icon');
+                if(icon) { icon.innerHTML = '&#x2195;'; icon.style.opacity = '0.3'; }
+            });
+            
+            // Set active header
+            th.classList.toggle('sort-asc', !isAscending);
+            th.classList.toggle('sort-desc', isAscending);
+            const icon = th.querySelector('.sort-icon');
+            if(icon) {
+                icon.innerHTML = isAscending ? '&#x2193;' : '&#x2191;'; // Down / Up
+                icon.style.opacity = '1';
+            }
+            
+            // Sort data
+            rows.sort((a, b) => {
+                let aText = a.children[index].textContent.trim();
+                let bText = b.children[index].textContent.trim();
+                
+                // Parse numbers (ignoring commas/units)
+                let aNum = parseFloat(aText.replace(/[^0-9.-]+/g,""));
+                let bNum = parseFloat(bText.replace(/[^0-9.-]+/g,""));
+                
+                // Parse dates
+                let aDate = Date.parse(aText);
+                let bDate = Date.parse(bText);
+
+                if(!isNaN(aDate) && !isNaN(bDate) && aText.length > 8) {
+                    return isAscending ? bDate - aDate : aDate - bDate; // Dates
+                } else if(!isNaN(aNum) && !isNaN(bNum) && /\d/.test(aText)) {
+                    return isAscending ? bNum - aNum : aNum - bNum; // Numbers
+                }
+                // Alphabetical
+                return isAscending ? bText.localeCompare(aText) : aText.localeCompare(bText);
+            });
+            
+            tbody.append(...rows);
+        };
+    });
+}
 // ==================== INITIALIZATION ====================
 document.addEventListener('DOMContentLoaded', async function() {
     await checkSystemStatus(); 
