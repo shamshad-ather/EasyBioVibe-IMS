@@ -6,7 +6,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_SRC="$SCRIPT_DIR/EasyBioVibe-IMS"
-ICON_SRC="$SCRIPT_DIR/../../assets/icon_256.png"
+ICON_SRC="$SCRIPT_DIR/icon_256.png"
 DESKTOP_SRC="$SCRIPT_DIR/easybiovibe-ims.desktop"
 
 BIN_DIR="$HOME/.local/bin"
