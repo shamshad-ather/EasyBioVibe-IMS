@@ -28,6 +28,19 @@ jobs:
       - name: Generate icon assets
         run: python assets/make_icon.py
 
+      # ---------------- Read Version ----------------
+      - name: Read Version from VERSION.md
+        run: |
+          VERSION=$(cat VERSION.md | xargs)
+          # Strip 'v' if it exists to standardize the environment variable
+          if [[ $VERSION == v* ]]; then
+            CLEAN_VERSION="${VERSION:1}"
+          else
+            CLEAN_VERSION="$VERSION"
+          fi
+          echo "APP_VERSION=$CLEAN_VERSION" >> $GITHUB_ENV
+        shell: bash
+
       # ---------------- Windows ----------------
       - name: Build exe (Windows)
         if: matrix.os == 'windows-latest'
@@ -37,6 +50,7 @@ jobs:
           --add-data "templates;templates"
           --add-data "assets;assets"
           --add-data "static;static"
+          --add-data "VERSION.md;."
           --hidden-import flask_bcrypt
           launcher.py
 
@@ -60,6 +74,7 @@ jobs:
           --add-data "templates:templates"
           --add-data "assets:assets"
           --add-data "static:static"
+          --add-data "VERSION.md:."
           --hidden-import flask_bcrypt
           launcher.py
 
@@ -69,14 +84,14 @@ jobs:
           mkdir -p dist/dmg
           cp -R "dist/EasyBioVibe-IMS.app" dist/dmg/
           ln -s /Applications dist/dmg/Applications
-          hdiutil create -volname "EasyBioVibe-IMS" -srcfolder dist/dmg -ov -format UDZO dist/EasyBioVibe-IMS.dmg
+          hdiutil create -volname "EasyBioVibe-IMS" -srcfolder dist/dmg -ov -format UDZO dist/EasyBioVibe-IMS-Mac-v${{ env.APP_VERSION }}.dmg
 
       - name: Upload macOS dmg
         if: matrix.os == 'macos-latest'
         uses: actions/upload-artifact@v4
         with:
           name: EasyBioVibe-IMS-macOS
-          path: dist/EasyBioVibe-IMS.dmg
+          path: dist/*.dmg
 
       # ---------------- Linux ----------------
       - name: Build binary (Linux)
@@ -87,6 +102,7 @@ jobs:
           --add-data "templates:templates"
           --add-data "assets:assets"
           --add-data "static:static"
+          --add-data "VERSION.md:."
           --hidden-import flask_bcrypt
           launcher.py
 
@@ -100,14 +116,14 @@ jobs:
           cp packaging/linux/install.sh release/EasyBioVibe-IMS-linux/
           cp packaging/linux/uninstall.sh release/EasyBioVibe-IMS-linux/
           chmod +x release/EasyBioVibe-IMS-linux/EasyBioVibe-IMS release/EasyBioVibe-IMS-linux/install.sh release/EasyBioVibe-IMS-linux/uninstall.sh
-          tar -czf EasyBioVibe-IMS-linux.tar.gz -C release EasyBioVibe-IMS-linux
+          tar -czf EasyBioVibe-IMS-Linux-v${{ env.APP_VERSION }}.tar.gz -C release EasyBioVibe-IMS-linux
 
       - name: Upload Linux tarball
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
         with:
           name: EasyBioVibe-IMS-Linux
-          path: EasyBioVibe-IMS-linux.tar.gz
+          path: EasyBioVibe-IMS-Linux-v${{ env.APP_VERSION }}.tar.gz
 
   release:
     needs: build
