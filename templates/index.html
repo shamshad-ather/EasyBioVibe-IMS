@@ -246,7 +246,7 @@ textarea.form-control{min-height:80px;resize:vertical}
                 <path d="M1 17 Q9 17 12 11 T22 3 Q25 1 31 1" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
             </svg>
             <div class="logo-icon" id="headerLabAbbrev">LAB</div>
-            <div class="logo-text"><h1 id="headerAppName">EasyBio.Vibe v2026.07.05</h1><span id="headerLabName">Loading Setup...</span></div>
+            <div class="logo-text"><h1 id="headerAppName">EasyBio.Vibe</h1><span id="headerLabName">Loading Setup...</span></div>
         </div>
         <div class="header-actions">
             <span id="currentUserDisplay" style="font-size:13px;color:rgba(255,255,255,0.85);"></span>
@@ -317,7 +317,7 @@ textarea.form-control{min-height:80px;resize:vertical}
 
     <!-- GENERIC SYSTEM FOOTER TO PREVENT CONFUSION -->
     <div class="dev-footer">
-        <span>EasyBioVibe-IMS v2026.07.05 | Vibed By Shamshad Ather</span>
+        <span>EasyBioVibe-IMS | Vibed By Shamshad Ather</span>
     </div>
 
     <div class="modal-overlay" id="modalOverlay">
@@ -396,16 +396,27 @@ async function loadAppSettings() {
     const config = await res.json();
     DB.settings.lab_name = config.lab_name || 'EasyBio Space';
     DB.settings.lab_abbrev = config.lab_abbrev || 'LAB';
+    DB.settings.app_version = config.app_version || 'vUnknown';
     applyBranding();
 }
 
 function applyBranding() {
-    document.title = DB.settings.lab_abbrev + '-IMS - ' + DB.settings.lab_name;
-    document.getElementById('headerAppName').textContent = DB.settings.lab_abbrev + '-IMS v2026.07.05';
+    const versionStr = DB.settings.app_version ? ` ${DB.settings.app_version}` : '';
+
+    document.title = `${DB.settings.lab_abbrev}-IMS - ${DB.settings.lab_name}`;
+    
+    // Update header title
+    document.getElementById('headerAppName').textContent = `${DB.settings.lab_abbrev}-IMS${versionStr}`;
     document.getElementById('headerLabAbbrev').textContent = DB.settings.lab_abbrev;
     document.getElementById('headerLabName').textContent = DB.settings.lab_name;
     
-    if(document.getElementById('navSettings')) {
+    // Update footer text
+    const footerSpan = document.querySelector('.dev-footer span');
+    if (footerSpan) {
+        footerSpan.textContent = `${DB.settings.lab_abbrev}-IMS${versionStr} | Vibed By Shamshad Ather`;
+    }
+    
+    if (document.getElementById('navSettings')) {
         document.getElementById('navSettings').style.display = isAdmin() ? 'flex' : 'none';
     }
 }
@@ -495,7 +506,6 @@ async function loadRealData() {
             MaterialType: i.category || i.MaterialType || 'Other',
             Unit: i.base_unit || i.Unit || 'Nos',
             VendorID: i.vendor_id ? String(i.vendor_id) : (i.VendorID ? String(i.VendorID) : ''),
-            DepartmentID: i.department_id ? String(i.department_id) : '',
             AlertThreshold: i.pack_size || i.AlertThreshold || 15,
             Status: i.status || i.Status || 'Active'
         }));
@@ -506,6 +516,8 @@ async function loadRealData() {
             id: String(b.id),
             BatchCode: b.BatchCode || makeCode('BAT', b.id),
             InventoryID: String(b.inventory_id || b.InventoryID || ''),
+            DepartmentID: b.department_id ? String(b.department_id) : (b.DepartmentID ? String(b.DepartmentID) : ''),
+            StudyID: b.study_id ? String(b.study_id) : (b.StudyID ? String(b.StudyID) : ''),
             PurchaseOrderNo: b.po_number || b.PurchaseOrderNo || '',
             LotNumber: b.lot_number || b.LotNumber || '',
             ExpiryDate: b.expiry_date || b.ExpiryDate || '',
@@ -2055,13 +2067,11 @@ async function saveUser(e) {
 async function renderInventory(content) {
     const search = (document.getElementById('searchInv')?.value || '').toLowerCase();
     const filterType = document.getElementById('filterInvType')?.value || '';
-    const filterDept = document.getElementById('filterInvDept')?.value || '';
     
     let items = DB.inventory;
 
     if (search) items = items.filter(i => i.MaterialName.toLowerCase().includes(search) || i.Make.toLowerCase().includes(search) || i.InventoryCode.toLowerCase().includes(search));
     if (filterType) items = items.filter(i => i.MaterialType === filterType);
-    if (filterDept) items = items.filter(i => i.DepartmentID === filterDept);
 
     content.innerHTML = `
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
@@ -2084,20 +2094,15 @@ async function renderInventory(content) {
                 <option value="">All Types</option>
                 ${MATERIAL_TYPES.map(t=>`<option value="${t}" ${filterType===t?'selected':''}>${t}</option>`).join('')}
             </select>
-            <select class="form-control" id="filterInvDept" onchange="renderCurrentPage()">
-                <option value="">All Departments</option>
-                ${DB.departments.filter(d=>d.Status==='Active').map(d=>`<option value="${d.id}" ${filterDept===d.id?'selected':''}>${escapeHtml(d.DepartmentName)}</option>`).join('')}
-            </select>
             ${isAdmin() ? `<button class="btn btn-secondary" onclick="openInventoryModal()"><svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg> Add Material</button>` : ''}
         </div>
         
         <div class="card">
             <div class="table-container">
                 <table class="data-table">
-                    <thead><tr><th>SN</th><th>Material</th><th>Department</th><th>Type</th><th>Unit</th><th>Stock</th><th>Alert</th><th>Actions</th></tr></thead>
+                    <thead><tr><th>SN</th><th>Material</th><th>Type</th><th>Unit</th><th>Stock</th><th>Alert</th><th>Actions</th></tr></thead>
                     <tbody>
                         ${items.map((i, idx) => {
-                            const dept = getLookup(i.DepartmentID, 'departments');
                             const total = getInventoryTotalQty(i.id);
                             return `<tr>
                                 <td>${idx + 1}</td>
@@ -2105,7 +2110,6 @@ async function renderInventory(content) {
                                     <div style="font-weight:600;">${escapeHtml(i.MaterialName)}</div>
                                     <div style="font-size:11px;color:var(--gray-500);">${escapeHtml(i.Make)} ${i.Model?'| '+escapeHtml(i.Model):''}</div>
                                 </td>
-                                <td>${dept?escapeHtml(dept.DepartmentName):'Unassigned'}</td>
                                 <td><span class="badge badge-gray">${i.MaterialType}</span></td>
                                 <td>${i.Unit}</td>
                                 <td class="qty-display ${getQtyClass(i.id)}">${total} ${i.Unit}</td>
@@ -2141,13 +2145,6 @@ function openInventoryModal(id) {
                 <div class="form-group">
                     <label>Material Name <span class="required">*</span></label>
                     <input type="text" class="form-control" name="MaterialName" value="${item?escapeHtml(item.MaterialName):''}" required>
-                </div>
-                <div class="form-group">
-                    <label>Assigned Department <span class="required">*</span></label>
-                    <select class="form-control" name="DepartmentID" required>
-                        <option value="">Select Department</option>
-                        ${DB.departments.filter(d=>d.Status==='Active').map(d=>`<option value="${d.id}" ${item&&String(item.DepartmentID)===String(d.id)?'selected':''}>${escapeHtml(d.DepartmentName)}</option>`).join('')}
-                    </select>
                 </div>
                 <div class="form-group">
                     <label>Material Type <span class="required">*</span></label>
@@ -2215,8 +2212,7 @@ async function saveInventory(e) {
         category: data.MaterialType, 
         pack_size: parseFloat(data.AlertThreshold || 15),
         base_unit: data.Unit,
-        vendor_id: data.VendorID ? parseInt(data.VendorID) : null,
-        department_id: data.DepartmentID ? parseInt(data.DepartmentID) : null
+        vendor_id: data.VendorID ? parseInt(data.VendorID) : null
     };
 
     try {
@@ -2233,7 +2229,6 @@ async function saveInventory(e) {
                 MaterialName: payload.material_name, Make: payload.make, Model: payload.model,
                 MaterialType: payload.category, Unit: payload.base_unit,
                 VendorID: payload.vendor_id ? String(payload.vendor_id) : '',
-                DepartmentID: payload.department_id ? String(payload.department_id) : '',
                 AlertThreshold: String(payload.pack_size)
             });
             await loadRealData();
@@ -2252,28 +2247,33 @@ async function saveInventory(e) {
 function renderBatches(content) {
     const search = (document.getElementById('searchBatch')?.value || '').toLowerCase();
     const filterInv = document.getElementById('filterBatchInv')?.value || '';
+    const filterDept = document.getElementById('filterBatchDept')?.value || '';
     const fromDate = document.getElementById('batchFrom')?.value || '';
     const toDate = document.getElementById('batchTo')?.value || '';
     
     let items = DB.batches;
     if (search) items = items.filter(b => b.BatchCode.toLowerCase().includes(search) || b.LotNumber.toLowerCase().includes(search) || b.PurchaseOrderNo.toLowerCase().includes(search));
     if (filterInv) items = items.filter(b => b.InventoryID === filterInv);
+    if (filterDept) items = items.filter(b => b.DepartmentID === filterDept);
     
-    // Date Filtering Logic (Filtering by Expiry Date)
     if (fromDate) items = items.filter(b => b.ExpiryDate >= fromDate);
     if (toDate) items = items.filter(b => b.ExpiryDate <= toDate);
 
     content.innerHTML = `
         <h1 class="page-title">Batch Management</h1>
-        <p class="page-subtitle">Track procurement batches and quantities</p>
+        <p class="page-subtitle">Track procurement batches, assigned departments, and quantities</p>
         <div class="filters-bar">
-            <div class="search-box" style="max-width:250px;">
+            <div class="search-box" style="max-width:220px;">
                 <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
                 <input type="text" class="form-control" id="searchBatch" placeholder="Search batches..." value="${escapeHtml(search)}" oninput="renderCurrentPage()">
             </div>
             <select class="form-control" id="filterBatchInv" onchange="renderCurrentPage()">
                 <option value="">All Materials</option>
                 ${DB.inventory.filter(i=>i.Status==='Active').map(i=>`<option value="${i.id}" ${filterInv===i.id?'selected':''}>${escapeHtml(i.MaterialName)}</option>`).join('')}
+            </select>
+            <select class="form-control" id="filterBatchDept" onchange="renderCurrentPage()">
+                <option value="">All Departments</option>
+                ${DB.departments.filter(d=>d.Status==='Active').map(d=>`<option value="${d.id}" ${filterDept===d.id?'selected':''}>${escapeHtml(d.DepartmentName)}</option>`).join('')}
             </select>
             <div style="display:flex;align-items:center;gap:6px;">
                 <span style="font-size:12px;color:var(--gray-500);font-weight:600;">FROM</span>
@@ -2288,10 +2288,12 @@ function renderBatches(content) {
         <div class="card">
             <div class="table-container">
                 <table class="data-table">
-                    <thead><tr><th>SN</th><th>Material</th><th>PO No</th><th>Lot</th><th>Expiry</th><th>Received</th><th>Current</th><th>Status</th><th>Actions</th></tr></thead>
+                    <thead><tr><th>SN</th><th>Material</th><th>Department</th><th>Study</th><th>PO No</th><th>Lot</th><th>Expiry</th><th>Received</th><th>Current</th><th>Status</th><th>Actions</th></tr></thead>
                     <tbody>
                         ${items.map((b, idx) => {
                             const inv = getLookup(b.InventoryID, 'inventory');
+                            const dept = getLookup(b.DepartmentID, 'departments');
+                            const study = getLookup(b.StudyID, 'studies');
                             const exp = new Date(b.ExpiryDate);
                             const today = new Date();
                             const daysLeft = Math.ceil((exp - today) / (1000*60*60*24));
@@ -2299,6 +2301,8 @@ function renderBatches(content) {
                             return `<tr>
                                 <td>${idx + 1}</td>
                                 <td>${inv?escapeHtml(inv.MaterialName):'N/A'}</td>
+                                <td>${dept?escapeHtml(dept.DepartmentName):'<span class="text-muted">Unassigned</span>'}</td>
+                                <td>${study?escapeHtml(study.StudyName):'-'}</td>
                                 <td>${escapeHtml(b.PurchaseOrderNo)}</td>
                                 <td>${escapeHtml(b.LotNumber)}</td>
                                 <td class="qty-display ${expClass}">${formatDate(b.ExpiryDate)}</td>
@@ -2332,6 +2336,20 @@ function openBatchModal(id) {
                     <select class="form-control" name="InventoryID" required>
                         <option value="">Select Material</option>
                         ${DB.inventory.filter(i=>i.Status==='Active').map(i=>`<option value="${i.id}" ${item&&item.InventoryID===i.id?'selected':''}>${escapeHtml(i.MaterialName)}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Assigned Department <span class="required">*</span></label>
+                    <select class="form-control" name="DepartmentID" required>
+                        <option value="">Select Department</option>
+                        ${DB.departments.filter(d=>d.Status==='Active').map(d=>`<option value="${d.id}" ${item&&String(item.DepartmentID)===String(d.id)?'selected':''}>${escapeHtml(d.DepartmentName)}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Associated Study (Optional)</label>
+                    <select class="form-control" name="StudyID">
+                        <option value="">Select Study</option>
+                        ${DB.studies.filter(s=>s.Status==='Active').map(s=>`<option value="${s.id}" ${item&&String(item.StudyID)===String(s.id)?'selected':''}>${escapeHtml(s.StudyName)}</option>`).join('')}
                     </select>
                 </div>
                 <div class="form-group">
@@ -2392,6 +2410,8 @@ async function saveBatch(e) {
     const payload = {
         id: data.id ? parseInt(data.id) : null,
         inventory_id: data.InventoryID,
+        department_id: data.DepartmentID || null,
+        study_id: data.StudyID || null,
         po_number: data.PurchaseOrderNo,
         lot_number: data.LotNumber,
         expiry_date: data.ExpiryDate,

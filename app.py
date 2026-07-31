@@ -1,3 +1,5 @@
+import socket
+import webbrowser
 from flask import Flask, render_template, request, jsonify, session
 from flask_bcrypt import Bcrypt
 from functools import wraps
@@ -11,10 +13,39 @@ import time
 import threading
 import signal
 
-def resource_path(relative):
-    base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(base, relative)
 
+def resource_path(relative_path):
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+        
+    return os.path.join(base_path, relative_path)
+
+def get_app_version():
+    filepath = resource_path('VERSION.md')
+    print(f"\n--- DEBUG: VERSION CHECK ---")
+    print(f"Target path: {filepath}")
+    
+    if not os.path.exists(filepath):
+        print("Error: The OS says the file does not exist at this path.")
+        return "vUnknown"
+        
+    try:
+        # Enforcing utf-8 prevents Windows encoding crashes
+        with open(filepath, 'r', encoding='utf-8') as f:
+            version = f.read().strip()
+            print(f"Success! Read version: {version}")
+            print(f"----------------------------\n")
+            return version
+    except Exception as e:
+        print(f"Error reading file: {str(e)}")
+        print(f"----------------------------\n")
+        return "vUnknown"
+
+APP_VERSION = get_app_version()
+
+APP_VERSION = get_app_version()
 def gen_code(name, fallback='GEN'):
     import re
     parts = [p for p in re.split(r'[\s\-_]+', (name or '').strip()) if p]
@@ -92,6 +123,7 @@ def init_db():
         except sqlite3.OperationalError:
             pass
     
+    # Inventory is now a master material catalog (Department removed)
     c.execute('''CREATE TABLE IF NOT EXISTS Inventory_Master (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         item_code TEXT UNIQUE, 
@@ -101,16 +133,16 @@ def init_db():
         category TEXT, 
         pack_size REAL, 
         base_unit TEXT,
-        vendor_id INTEGER,
-        department_id INTEGER
+        vendor_id INTEGER
     )''')
     
-    for col, col_type in [("model", "TEXT"), ("vendor_id", "INTEGER"), ("department_id", "INTEGER")]:
+    for col, col_type in [("model", "TEXT"), ("vendor_id", "INTEGER")]:
         try:
             c.execute(f"ALTER TABLE Inventory_Master ADD COLUMN {col} {col_type}")
         except sqlite3.OperationalError:
             pass
 
+    # Physical Batches now track procurement location (Department & Study)
     c.execute('''CREATE TABLE IF NOT EXISTS Physical_Batches (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         batch_code TEXT, 
@@ -122,10 +154,20 @@ def init_db():
         quantity_received REAL, 
         current_quantity REAL, 
         unit TEXT, 
+        department_id INTEGER,
+        study_id INTEGER,
         status TEXT DEFAULT 'Active', 
         remarks TEXT,
-        FOREIGN KEY(inventory_id) REFERENCES Inventory_Master(id)
+        FOREIGN KEY(inventory_id) REFERENCES Inventory_Master(id),
+        FOREIGN KEY(department_id) REFERENCES Departments(id),
+        FOREIGN KEY(study_id) REFERENCES Studies(id)
     )''')
+
+    for col, col_type in [("department_id", "INTEGER"), ("study_id", "INTEGER")]:
+        try:
+            c.execute(f"ALTER TABLE Physical_Batches ADD COLUMN {col} {col_type}")
+        except sqlite3.OperationalError:
+            pass
     
     c.execute('''CREATE TABLE IF NOT EXISTS Usage_Logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -300,6 +342,7 @@ def handle_settings():
     rows = c.fetchall()
     settings = {row['setting_key']: row['setting_value'] for row in rows}
     conn.close()
+    settings['app_version'] = APP_VERSION
     return jsonify(settings)
 
 @app.route('/login', methods=['POST'])
@@ -333,17 +376,16 @@ def handle_inventory():
         data = request.get_json()
         item_id = data.get('id')
         vendor_id = int(data['vendor_id']) if data.get('vendor_id') else None
-        department_id = int(data['department_id']) if data.get('department_id') else None
         try:
             if item_id:
                 c.execute("""UPDATE Inventory_Master 
-                             SET material_name=?, make=?, model=?, category=?, pack_size=?, base_unit=?, vendor_id=?, department_id=? 
+                             SET material_name=?, make=?, model=?, category=?, pack_size=?, base_unit=?, vendor_id=?
                              WHERE id=?""",
-                          (data['material_name'], data.get('make', ''), data.get('model', ''), data.get('category', 'Other'), data.get('pack_size', 15), data.get('base_unit', 'Nos'), vendor_id, department_id, item_id))
+                          (data['material_name'], data.get('make', ''), data.get('model', ''), data.get('category', 'Other'), data.get('pack_size', 15), data.get('base_unit', 'Nos'), vendor_id, item_id))
             else:
-                c.execute("""INSERT INTO Inventory_Master (item_code, material_name, make, model, category, pack_size, base_unit, vendor_id, department_id) 
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                          (data.get('item_code'), data['material_name'], data.get('make', ''), data.get('model', ''), data.get('category', 'Other'), data.get('pack_size', 15), data.get('base_unit', 'Nos'), vendor_id, department_id))
+                c.execute("""INSERT INTO Inventory_Master (item_code, material_name, make, model, category, pack_size, base_unit, vendor_id) 
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                          (data.get('item_code'), data['material_name'], data.get('make', ''), data.get('model', ''), data.get('category', 'Other'), data.get('pack_size', 15), data.get('base_unit', 'Nos'), vendor_id))
             conn.commit()
             status = "success"
         except sqlite3.IntegrityError:
@@ -596,17 +638,22 @@ def handle_batches():
     if request.method == 'POST':
         data = request.get_json()
         item_id = data.get('id')
+        dept_id = int(data['department_id']) if data.get('department_id') else None
+        study_id = int(data['study_id']) if data.get('study_id') else None
+
         if item_id:
-            c.execute("""UPDATE Physical_Batches SET inventory_id=?, po_number=?, lot_number=?, expiry_date=?, date_first_used=?, quantity_received=?, current_quantity=?, unit=?, status=?, remarks=? WHERE id=?""",
-                      (data.get('inventory_id'), data.get('po_number', ''), data.get('lot_number', ''), data.get('expiry_date', ''), data.get('date_first_used', ''), data.get('quantity_received', 0), data.get('current_quantity', 0), data.get('unit', 'Nos'), data.get('status', 'Active'), data.get('remarks', ''), item_id))
+            c.execute("""UPDATE Physical_Batches 
+                         SET inventory_id=?, po_number=?, lot_number=?, expiry_date=?, date_first_used=?, quantity_received=?, current_quantity=?, unit=?, department_id=?, study_id=?, status=?, remarks=? 
+                         WHERE id=?""",
+                      (data.get('inventory_id'), data.get('po_number', ''), data.get('lot_number', ''), data.get('expiry_date', ''), data.get('date_first_used', ''), data.get('quantity_received', 0), data.get('current_quantity', 0), data.get('unit', 'Nos'), dept_id, study_id, data.get('status', 'Active'), data.get('remarks', ''), item_id))
         else:
             c.execute("SELECT MAX(id) FROM Physical_Batches")
             max_id = c.fetchone()[0] or 0
             batch_code = f"BAT{str(max_id + 1).zfill(6)}"
             
-            c.execute("""INSERT INTO Physical_Batches (batch_code, inventory_id, po_number, lot_number, expiry_date, date_first_used, quantity_received, current_quantity, unit, status, remarks) 
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                      (batch_code, data.get('inventory_id'), data.get('po_number', ''), data.get('lot_number', ''), data.get('expiry_date', ''), data.get('date_first_used', ''), data.get('quantity_received', 0), data.get('current_quantity', 0), data.get('unit', 'Nos'), data.get('status', 'Active'), data.get('remarks', '')))
+            c.execute("""INSERT INTO Physical_Batches (batch_code, inventory_id, po_number, lot_number, expiry_date, date_first_used, quantity_received, current_quantity, unit, department_id, study_id, status, remarks) 
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                      (batch_code, data.get('inventory_id'), data.get('po_number', ''), data.get('lot_number', ''), data.get('expiry_date', ''), data.get('date_first_used', ''), data.get('quantity_received', 0), data.get('current_quantity', 0), data.get('unit', 'Nos'), dept_id, study_id, data.get('status', 'Active'), data.get('remarks', '')))
         conn.commit()
         conn.close()
         return jsonify({"status": "success"})
@@ -615,6 +662,7 @@ def handle_batches():
     rows = [dict(r) for r in c.fetchall()]
     conn.close()
     return jsonify(rows)
+
 
 @app.route('/api/vendors', methods=['GET', 'POST'])
 @login_required
@@ -827,11 +875,35 @@ def monitor_heartbeat():
             print("Window closed. Shutting down server to free port...")
             os.kill(os.getpid(), signal.SIGTERM)
 
+def get_free_port():
+    """Asks the OS to assign an available port."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('127.0.0.1', 0))
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        return s.getsockname()[1]
+
 if __name__ == '__main__':
     frozen = getattr(sys, 'frozen', False)
     
-    # Start the background monitor thread
-    monitor_thread = threading.Thread(target=monitor_heartbeat, daemon=True)
-    monitor_thread.start()
+    # 1. Ask the OS for a free port, OR grab it from the environment if this is the Worker process
+    if 'EASYBIO_PORT' in os.environ:
+        port = int(os.environ['EASYBIO_PORT'])
+    else:
+        port = get_free_port()
+        os.environ['EASYBIO_PORT'] = str(port)
     
-    app.run(debug=not frozen, use_reloader=not frozen, host='127.0.0.1', port=5000)
+    if frozen or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+        # Start the background heartbeat monitor
+        monitor_thread = threading.Thread(target=monitor_heartbeat, daemon=True)
+        monitor_thread.start()
+        
+        # 2. Auto-launch the browser to the dynamic port (after a 1.5s delay to let Flask boot)
+        target_url = f'http://127.0.0.1:{port}'
+        threading.Timer(1.5, lambda: webbrowser.open(target_url)).start()
+        print(f"\n=======================================================")
+        print(f"EasyBio.Vibe IMS ({APP_VERSION}) is booting up...")
+        print(f"Opening automatically in your browser at: {target_url}")
+        print(f"=======================================================\n")
+    
+    # 3. Bind Flask to the synchronized dynamic port
+    app.run(debug=not frozen, use_reloader=not frozen, host='127.0.0.1', port=port)
