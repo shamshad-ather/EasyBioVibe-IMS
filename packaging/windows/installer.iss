@@ -4,8 +4,27 @@
 ; matters on shared/institutional lab PCs where staff may not have admin.
 
 #define MyAppName "EasyBioVibe-IMS"
-#define MyAppVersion "2026.07.05"
 #define MyAppExeName "EasyBioVibe-IMS.exe"
+
+; =========================================================================
+; DYNAMIC VERSION EXTRACTION
+; Reads the version string directly from the root VERSION.md file.
+; =========================================================================
+#define FileHandle FileOpen("..\..\VERSION.md")
+#if FileHandle
+  #define RawVersion FileRead(FileHandle)
+  #expr FileClose(FileHandle)
+  
+  ; Strip the "v" prefix if it exists (e.g., turns "v2026.07.05" into "2026.07.05")
+  #if Copy(RawVersion, 1, 1) == "v"
+    #define MyAppVersion Copy(RawVersion, 2, Len(RawVersion)-1)
+  #else
+    #define MyAppVersion RawVersion
+  #endif
+#else
+  #define MyAppVersion "Unknown"
+#endif
+; =========================================================================
 
 [Setup]
 AppId={{6E6C0D2F-6B7B-4E4C-9C4B-EASYBIOVIBE01}}
@@ -15,7 +34,7 @@ DefaultDirName={localappdata}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
-OutputBaseFilename=EasyBioVibe-IMS-Setup-{#MyAppVersion}
+OutputBaseFilename=EasyBioVibe-IMS-Setup-v{#MyAppVersion}
 SetupIconFile=..\..\assets\icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma
