@@ -23,29 +23,27 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 def get_app_version():
-    filepath = resource_path('VERSION.md')
-    print(f"\n--- DEBUG: VERSION CHECK ---")
-    print(f"Target path: {filepath}")
-    
-    if not os.path.exists(filepath):
-        print("Error: The OS says the file does not exist at this path.")
-        return "vUnknown"
-        
     try:
-        # Enforcing utf-8 prevents Windows encoding crashes
-        with open(filepath, 'r', encoding='utf-8') as f:
-            version = f.read().strip()
-            print(f"Success! Read version: {version}")
-            print(f"----------------------------\n")
-            return version
+        # 1. Check inside PyInstaller's temporary _MEIPASS extraction folder
+        meipass_path = os.path.join(getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__))), 'VERSION.md')
+        if os.path.exists(meipass_path):
+            with open(meipass_path, 'r', encoding='utf-8') as f:
+                return f.read().strip()
+        
+        # 2. Fallback check in the current working directory (for local testing)
+        if os.path.exists('VERSION.md'):
+            with open('VERSION.md', 'r', encoding='utf-8') as f:
+                return f.read().strip()
+                
+        # If neither path has the file, return a precise missing error
+        return "vUnknown (File Missing)"
+        
     except Exception as e:
-        print(f"Error reading file: {str(e)}")
-        print(f"----------------------------\n")
-        return "vUnknown"
+        # If the file exists but Windows blocks it (encoding/permissions)
+        return f"vUnknown (Err: {str(e)})"
 
 APP_VERSION = get_app_version()
 
-APP_VERSION = get_app_version()
 def gen_code(name, fallback='GEN'):
     import re
     parts = [p for p in re.split(r'[\s\-_]+', (name or '').strip()) if p]
