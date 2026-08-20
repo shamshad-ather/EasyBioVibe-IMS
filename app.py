@@ -12,7 +12,11 @@ from pathlib import Path
 import time
 import threading
 import signal
-
+import difflib
+from io import BytesIO
+from openpyxl import Workbook, load_workbook
+from openpyxl.worksheet.datavalidation import DataValidation
+from flask import make_response
 
 def resource_path(relative_path):
     try:
@@ -23,24 +27,15 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 def get_app_version():
+    filepath = resource_path('VERSION.md')
+    if not os.path.exists(filepath):
+        return "vUnknown"
+        
     try:
-        # 1. Check inside PyInstaller's temporary _MEIPASS extraction folder
-        meipass_path = os.path.join(getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__))), 'VERSION.md')
-        if os.path.exists(meipass_path):
-            with open(meipass_path, 'r', encoding='utf-8') as f:
-                return f.read().strip()
-        
-        # 2. Fallback check in the current working directory (for local testing)
-        if os.path.exists('VERSION.md'):
-            with open('VERSION.md', 'r', encoding='utf-8') as f:
-                return f.read().strip()
-                
-        # If neither path has the file, return a precise missing error
-        return "vUnknown (File Missing)"
-        
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read().strip()
     except Exception as e:
-        # If the file exists but Windows blocks it (encoding/permissions)
-        return f"vUnknown (Err: {str(e)})"
+        return "vUnknown"
 
 APP_VERSION = get_app_version()
 
@@ -55,7 +50,16 @@ def gen_code(name, fallback='GEN'):
         code = ''
     return code or fallback
 
-# Fixed, admin-controlled designation list (see /api/users).
+def get_unit_multiplier(unit):
+    mass_units = {'kg': 1000.0, 'g': 1.0, 'mg': 0.001, 'ug': 0.000001}
+    vol_units = {'L': 1.0, 'mL': 0.001, 'uL': 0.000001}
+    
+    if unit in mass_units:
+        return mass_units[unit], 'mass'
+    elif unit in vol_units:
+        return vol_units[unit], 'vol'
+    return 1.0, 'discrete'
+
 DESIGNATIONS = [
     'HoD', 'Faculty', 'Lab Tech', 'Student', 'JR', 'SR',
     'Research Associate', 'Project Associate', 'Research Assistant',
@@ -68,13 +72,6 @@ app = Flask(__name__, template_folder=resource_path('templates'), static_folder=
 _CACHE_DIR = os.path.join(Path.home(), '.cache', 'easybiovibe')
 os.makedirs(_CACHE_DIR, exist_ok=True)
 
-# --- Secret key: generated once per install, never hardcoded/committed ---
-# A hardcoded secret_key baked into every copy of the source (and every
-# packaged executable built from it) lets anyone who has read the public
-# repo forge a signed session cookie for ANY install of this app -- e.g.
-# a cookie claiming {"user": "attacker", "role": "Admin"} -- with no
-# password required at all. Instead, generate a random key the first time
-# the app runs on a given machine and reuse it from then on.
 _SECRET_KEY_PATH = os.path.join(_CACHE_DIR, 'secret.key')
 if not os.path.exists(_SECRET_KEY_PATH):
     with open(_SECRET_KEY_PATH, 'w') as f:
@@ -121,7 +118,6 @@ def init_db():
         except sqlite3.OperationalError:
             pass
     
-    # Inventory is now a master material catalog (Department removed)
     c.execute('''CREATE TABLE IF NOT EXISTS Inventory_Master (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         item_code TEXT UNIQUE, 
@@ -133,14 +129,17 @@ def init_db():
         base_unit TEXT,
         vendor_id INTEGER
     )''')
-    
-    for col, col_type in [("model", "TEXT"), ("vendor_id", "INTEGER")]:
+
+    for col, col_type in [
+        ("model", "TEXT"), 
+        ("alert_threshold", "REAL DEFAULT 15"), 
+        ("pack_qty", "REAL DEFAULT 1")
+    ]:
         try:
             c.execute(f"ALTER TABLE Inventory_Master ADD COLUMN {col} {col_type}")
         except sqlite3.OperationalError:
             pass
 
-    # Physical Batches now track procurement location (Department & Study)
     c.execute('''CREATE TABLE IF NOT EXISTS Physical_Batches (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         batch_code TEXT, 
@@ -161,7 +160,11 @@ def init_db():
         FOREIGN KEY(study_id) REFERENCES Studies(id)
     )''')
 
-    for col, col_type in [("department_id", "INTEGER"), ("study_id", "INTEGER")]:
+    for col, col_type in [
+        ("department_id", "INTEGER"), 
+        ("study_id", "INTEGER"),
+        ("vendor_id", "INTEGER")
+    ]:
         try:
             c.execute(f"ALTER TABLE Physical_Batches ADD COLUMN {col} {col_type}")
         except sqlite3.OperationalError:
@@ -225,13 +228,6 @@ def init_db():
 
 init_db()
 
-# ==================== AUTH ====================
-# Nearly every data route below previously had no session check at all,
-# and /api/users' edit path let anyone reset any user's password with no
-# login. These two decorators are the single source of truth for auth from
-# here on -- every route that reads or writes lab data requires a real
-# login, and anything sensitive (user management, DB export/import,
-# settings) requires the Admin role specifically.
 def login_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
@@ -306,7 +302,6 @@ def setup_system():
         
         conn.commit()
         
-        # Log the user in to avoid 401 errors right after setup
         session['user'] = data.get('username')
         session['role'] = 'Admin'
         
@@ -373,17 +368,21 @@ def handle_inventory():
     if request.method == 'POST':
         data = request.get_json()
         item_id = data.get('id')
-        vendor_id = int(data['vendor_id']) if data.get('vendor_id') else None
+        
+        pack_qty = float(data.get('pack_qty', 1))
+        alert_threshold = float(data.get('alert_threshold', 15))
+        base_unit = data.get('base_unit', 'Nos')
+
         try:
             if item_id:
                 c.execute("""UPDATE Inventory_Master 
-                             SET material_name=?, make=?, model=?, category=?, pack_size=?, base_unit=?, vendor_id=?
+                             SET material_name=?, make=?, model=?, category=?, alert_threshold=?, base_unit=?, pack_qty=?
                              WHERE id=?""",
-                          (data['material_name'], data.get('make', ''), data.get('model', ''), data.get('category', 'Other'), data.get('pack_size', 15), data.get('base_unit', 'Nos'), vendor_id, item_id))
+                          (data['material_name'], data.get('make', ''), data.get('model', ''), data.get('category', 'Other'), alert_threshold, base_unit, pack_qty, item_id))
             else:
-                c.execute("""INSERT INTO Inventory_Master (item_code, material_name, make, model, category, pack_size, base_unit, vendor_id) 
+                c.execute("""INSERT INTO Inventory_Master (item_code, material_name, make, model, category, alert_threshold, base_unit, pack_qty) 
                              VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                          (data.get('item_code'), data['material_name'], data.get('make', ''), data.get('model', ''), data.get('category', 'Other'), data.get('pack_size', 15), data.get('base_unit', 'Nos'), vendor_id))
+                          (data.get('item_code'), data['material_name'], data.get('make', ''), data.get('model', ''), data.get('category', 'Other'), alert_threshold, base_unit, pack_qty))
             conn.commit()
             status = "success"
         except sqlite3.IntegrityError:
@@ -447,12 +446,6 @@ def handle_faculty():
                 d = c.fetchone()
                 dept_name = d['name'] if d else ''
 
-            # Only an Admin may provision a new login account -- adding a
-            # Faculty master record used to auto-create one for anyone who
-            # was merely logged in (or, before login_required existed above,
-            # for anyone at all), bypassing the "Admin-only user creation"
-            # rule entirely. A non-admin still gets the Faculty record; they
-            # just don't get a free login account handed out alongside it.
             if session.get('role') == 'Admin':
                 try:
                     hashed_pw = bcrypt.generate_password_hash(DEFAULT_PASSWORD).decode('utf-8')
@@ -503,12 +496,6 @@ def handle_users():
     conn = get_db()
     c = conn.cursor()
     if request.method == 'POST':
-        # Creating a user, or changing ANY field on an existing one (role,
-        # status, and -- this was the critical hole -- password) is
-        # admin-only. The old code only checked the role on the "create"
-        # path; the "edit" path (item_id present) ran unconditionally, so
-        # anyone, logged in or not, could POST {"id": 1, "password": "x"}
-        # and take over any account, including the head Admin's.
         if session.get('role') != 'Admin':
             conn.close()
             return jsonify({"status": "error", "message": "Admin privileges required to add or modify users"}), 403
@@ -526,8 +513,6 @@ def handle_users():
         password_provided = data.get('password')
 
         if item_id:
-            # Guard against locking everyone out by demoting/deactivating
-            # the last remaining active Admin.
             if target_role != 'Admin' or data.get('status', 'Active') != 'Active':
                 c.execute("SELECT role, status FROM Users WHERE id=?", (item_id,))
                 target = c.fetchone()
@@ -553,20 +538,11 @@ def handle_users():
         conn.close()
         return jsonify({"status": "success", "default_password": DEFAULT_PASSWORD if not item_id and not password_provided else None})
 
-    # GET stays login-only (not admin-only): every signed-in user needs the
-    # roster to populate the "who used it" picker on the usage-log form.
     c.execute("SELECT id, username AS user_name, role, department, designation, study_ids, status FROM Users")
     rows = [dict(r) for r in c.fetchall()]
     conn.close()
     return jsonify(rows)
 
-# ==================== MY PROFILE (self-service) ====================
-# /api/users is now admin-only (see fix for the password-reset hole above),
-# which would otherwise break the existing "My Profile" self-edit feature
-# for every non-admin user. These two routes let anyone edit their OWN
-# department/designation/username and change their OWN password (with
-# their current password required) without needing Admin rights, and
-# without touching role/status -- those stay admin-only via /api/users.
 @app.route('/api/profile', methods=['GET', 'POST'])
 @login_required
 def handle_profile():
@@ -595,7 +571,7 @@ def handle_profile():
             return jsonify({"status": "error", "message": "That username is already taken"}), 400
 
         if new_username != session['user']:
-            session['user'] = new_username  # keep the session in sync with a self-rename
+            session['user'] = new_username
 
         conn.close()
         return jsonify({"status": "success", "username": new_username})
@@ -635,23 +611,30 @@ def handle_batches():
     c = conn.cursor()
     if request.method == 'POST':
         data = request.get_json()
+        
+        study_id_raw = data.get('study_id')
+        if not study_id_raw:
+            conn.close()
+            return jsonify({"status": "error", "message": "An associated Study is strictly required to save a batch."}), 400
+            
         item_id = data.get('id')
         dept_id = int(data['department_id']) if data.get('department_id') else None
-        study_id = int(data['study_id']) if data.get('study_id') else None
+        study_id = int(study_id_raw)
+        vendor_id = int(data['vendor_id']) if data.get('vendor_id') else None
 
         if item_id:
             c.execute("""UPDATE Physical_Batches 
-                         SET inventory_id=?, po_number=?, lot_number=?, expiry_date=?, date_first_used=?, quantity_received=?, current_quantity=?, unit=?, department_id=?, study_id=?, status=?, remarks=? 
+                         SET inventory_id=?, po_number=?, lot_number=?, expiry_date=?, date_first_used=?, quantity_received=?, current_quantity=?, unit=?, department_id=?, study_id=?, vendor_id=?, status=?, remarks=? 
                          WHERE id=?""",
-                      (data.get('inventory_id'), data.get('po_number', ''), data.get('lot_number', ''), data.get('expiry_date', ''), data.get('date_first_used', ''), data.get('quantity_received', 0), data.get('current_quantity', 0), data.get('unit', 'Nos'), dept_id, study_id, data.get('status', 'Active'), data.get('remarks', ''), item_id))
+                      (data.get('inventory_id'), data.get('po_number', ''), data.get('lot_number', ''), data.get('expiry_date', ''), data.get('date_first_used', ''), data.get('quantity_received', 0), data.get('current_quantity', 0), data.get('unit', 'Nos'), dept_id, study_id, vendor_id, data.get('status', 'Active'), data.get('remarks', ''), item_id))
         else:
             c.execute("SELECT MAX(id) FROM Physical_Batches")
             max_id = c.fetchone()[0] or 0
             batch_code = f"BAT{str(max_id + 1).zfill(6)}"
             
-            c.execute("""INSERT INTO Physical_Batches (batch_code, inventory_id, po_number, lot_number, expiry_date, date_first_used, quantity_received, current_quantity, unit, department_id, study_id, status, remarks) 
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                      (batch_code, data.get('inventory_id'), data.get('po_number', ''), data.get('lot_number', ''), data.get('expiry_date', ''), data.get('date_first_used', ''), data.get('quantity_received', 0), data.get('current_quantity', 0), data.get('unit', 'Nos'), dept_id, study_id, data.get('status', 'Active'), data.get('remarks', '')))
+            c.execute("""INSERT INTO Physical_Batches (batch_code, inventory_id, po_number, lot_number, expiry_date, date_first_used, quantity_received, current_quantity, unit, department_id, study_id, vendor_id, status, remarks) 
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                      (batch_code, data.get('inventory_id'), data.get('po_number', ''), data.get('lot_number', ''), data.get('expiry_date', ''), data.get('date_first_used', ''), data.get('quantity_received', 0), data.get('current_quantity', 0), data.get('unit', 'Nos'), dept_id, study_id, vendor_id, data.get('status', 'Active'), data.get('remarks', '')))
         conn.commit()
         conn.close()
         return jsonify({"status": "success"})
@@ -660,7 +643,6 @@ def handle_batches():
     rows = [dict(r) for r in c.fetchall()]
     conn.close()
     return jsonify(rows)
-
 
 @app.route('/api/vendors', methods=['GET', 'POST'])
 @login_required
@@ -740,20 +722,32 @@ def handle_usage():
     if request.method == 'POST':
         data = request.get_json()
         batch_id = data.get('batch_id')
-        qty_used = float(data.get('quantity_used', 0))
+        qty_used_raw = float(data.get('quantity_used', 0))
+        unit_used = data.get('unit', '')
         
-        c.execute("SELECT current_quantity FROM Physical_Batches WHERE id = ?", (batch_id,))
+        c.execute("SELECT current_quantity, unit FROM Physical_Batches WHERE id = ?", (batch_id,))
         batch = c.fetchone()
         if not batch:
             conn.close()
             return jsonify({"status": "error", "message": "Batch not found"}), 400
             
         current_qty = float(batch['current_quantity'])
-        if current_qty < qty_used:
+        batch_unit = batch['unit']
+        
+        used_mult, used_family = get_unit_multiplier(unit_used)
+        batch_mult, batch_family = get_unit_multiplier(batch_unit)
+        
+        if used_family != batch_family:
             conn.close()
-            return jsonify({"status": "error", "message": "Insufficient stock in selected batch"}), 400
+            return jsonify({"status": "error", "message": f"Unit mismatch: Cannot convert {unit_used} to {batch_unit}"}), 400
             
-        new_qty = max(0.0, current_qty - qty_used)
+        normalized_qty_used = (qty_used_raw * used_mult) / batch_mult
+        
+        if current_qty < normalized_qty_used:
+            conn.close()
+            return jsonify({"status": "error", "message": f"Insufficient stock. Tried to use {normalized_qty_used} {batch_unit}, but only {current_qty} {batch_unit} remains."}), 400
+            
+        new_qty = max(0.0, current_qty - normalized_qty_used)
         new_status = 'Active' if new_qty > 0 else 'Depleted'
         new_qty = round(new_qty, 4)
         
@@ -770,8 +764,8 @@ def handle_usage():
                   (consumer_user_id, 
                    data.get('inventory_id'), 
                    data.get('batch_code', ''), 
-                   qty_used, 
-                   data.get('unit', ''), 
+                   qty_used_raw, 
+                   unit_used, 
                    datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
                    'Lab Usage', 
                    data.get('department_id', ''), 
@@ -785,6 +779,7 @@ def handle_usage():
                    data.get('remarks', ''),
                    new_qty,
                    actual_recorder))
+        
         conn.commit()
         conn.close()
         return jsonify({"status": "success"})
@@ -854,8 +849,144 @@ def import_db():
     f.save(DB_PATH)
     return jsonify({"status": "success", "message": "Database imported. Restart EasyBio.Vibe for it to take effect."})
 
-# ==================== PING SHUTDOWN ====================
 LAST_PING = time.time()
+
+@app.route('/api/inventory/template', methods=['GET'])
+@admin_required
+def inventory_template():
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Inventory Upload"
+
+    # Define headers
+    headers = ['MaterialName', 'MaterialType', 'Make', 'Model', 'PackQty', 'Unit', 'AlertThreshold', 'Description']
+    ws.append(headers)
+
+    # Add an example row
+    ws.append(['Taq Polymerase', 'Reagent', 'ThermoFisher', '201-X', 500, 'Rxns', 15, 'Standard PCR enzyme'])
+
+    # --- ADD EXCEL DROPDOWNS (DATA VALIDATION) ---
+    # 1. Unit Dropdown (Column F)
+    units = ['Nos','uL','mL','L','ug','mg','g','kg','Box','Pack','Bottle','Rxns','Tube','Vial','Kit']
+    unit_formula = '"' + ','.join(units) + '"'
+    dv_unit = DataValidation(type="list", formula1=unit_formula, allow_blank=True)
+    ws.add_data_validation(dv_unit)
+    dv_unit.add("F2:F1048576") # Apply to all rows in column F
+
+    # 2. Material Type Dropdown (Column B)
+    mat_types = ['Reagent','Chemical','Plasticware','Glassware','Consumable','Kit','Buffer','Other']
+    mat_formula = '"' + ','.join(mat_types) + '"'
+    dv_type = DataValidation(type="list", formula1=mat_formula, allow_blank=True)
+    ws.add_data_validation(dv_type)
+    dv_type.add("B2:B1048576") # Apply to all rows in column B
+
+    # Save to memory
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+    
+    response = make_response(output.read())
+    response.headers["Content-Disposition"] = "attachment; filename=EasyBio_Inventory_Template.xlsx"
+    response.headers["Content-type"] = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    return response
+
+@app.route('/api/inventory/upload', methods=['POST'])
+@admin_required
+def upload_inventory():
+    file = request.files.get('file')
+    if not file:
+        return jsonify({"status": "error", "message": "No file uploaded"}), 400
+    
+    try:
+        # Load the Excel file
+        wb = load_workbook(file, data_only=True)
+        ws = wb.active
+        
+        # Read the rows
+        rows = list(ws.rows)
+        if len(rows) < 2:
+            return jsonify({"status": "error", "message": "File is empty or missing data"}), 400
+            
+        # Extract headers from the first row
+        headers = [str(cell.value).strip() if cell.value else f"Col{i}" for i, cell in enumerate(rows[0])]
+        
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("SELECT id, material_name FROM Inventory_Master")
+        existing_items = [dict(r) for r in c.fetchall()]
+        conn.close()
+        
+        parsed_data = []
+        for row in rows[1:]: # Skip header row
+            row_data = {headers[i]: cell.value for i, cell in enumerate(row)}
+            
+            new_name = str(row_data.get('MaterialName', '') or '').strip()
+            if not new_name or new_name == 'None':
+                continue
+            
+            # Semantic Matching Model (>80% duplicate check)
+            best_match = None
+            best_score = 0.0
+            for ext in existing_items:
+                score = difflib.SequenceMatcher(None, new_name.lower(), ext['material_name'].lower()).ratio()
+                if score > best_score:
+                    best_score = score
+                    best_match = ext
+            
+            parsed_data.append({
+                "MaterialName": new_name,
+                "MaterialType": str(row_data.get('MaterialType', 'Other') or 'Other').strip(),
+                "Make": str(row_data.get('Make', '') or '').strip(),
+                "Model": str(row_data.get('Model', '') or '').strip(),
+                "PackQty": float(row_data.get('PackQty') or 1),
+                "Unit": str(row_data.get('Unit', 'Nos') or 'Nos').strip(),
+                "AlertThreshold": float(row_data.get('AlertThreshold') or 15),
+                "Description": str(row_data.get('Description', '') or '').strip(),
+                "MatchScore": round(best_score * 100, 2),
+                "MatchedID": best_match['id'] if best_match else None,
+                "MatchedName": best_match['material_name'] if best_match else None
+            })
+            
+        return jsonify({"status": "success", "data": parsed_data})
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Failed to parse Excel file: {str(e)}"}), 400
+
+@app.route('/api/inventory/bulk', methods=['POST'])
+@admin_required
+def bulk_inventory():
+    data = request.get_json()
+    rows = data.get('rows', [])
+    
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT MAX(id) FROM Inventory_Master")
+    max_id = c.fetchone()[0] or 0
+    
+    added_count = 0
+    merged_count = 0
+    
+    for row in rows:
+        # If user ticked the merge box, we skip creating a new master inventory item.
+        # They will add this as a new batch against the existing ID later.
+        if row.get('MergeWithID'):
+            merged_count += 1
+            continue
+            
+        max_id += 1
+        item_code = f"INV{str(max_id).zfill(6)}"
+        try:
+            c.execute("""INSERT INTO Inventory_Master (item_code, material_name, make, model, category, alert_threshold, base_unit, pack_qty) 
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                      (item_code, row['MaterialName'], row.get('Make', ''), row.get('Model', ''), 
+                       row.get('MaterialType', 'Other'), float(row.get('AlertThreshold', 15)), 
+                       row.get('Unit', 'Nos'), float(row.get('PackQty', 1))))
+            added_count += 1
+        except sqlite3.IntegrityError:
+            pass
+                
+    conn.commit()
+    conn.close()
+    return jsonify({"status": "success", "message": f"Import complete: {added_count} added, {merged_count} merged/skipped."})
 
 @app.route('/api/ping', methods=['POST'])
 def ping():
@@ -864,17 +995,14 @@ def ping():
     return jsonify({"status": "ok"})
 
 def monitor_heartbeat():
-    # Give the server 10 seconds to boot up and load the initial UI
     time.sleep(10)
     while True:
         time.sleep(5)
-        # If 15 seconds pass without a ping from the browser, shut down
         if time.time() - LAST_PING > 15:
             print("Window closed. Shutting down server to free port...")
             os.kill(os.getpid(), signal.SIGTERM)
 
 def get_free_port():
-    """Asks the OS to assign an available port."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(('127.0.0.1', 0))
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -883,7 +1011,6 @@ def get_free_port():
 if __name__ == '__main__':
     frozen = getattr(sys, 'frozen', False)
     
-    # 1. Ask the OS for a free port, OR grab it from the environment if this is the Worker process
     if 'EASYBIO_PORT' in os.environ:
         port = int(os.environ['EASYBIO_PORT'])
     else:
@@ -891,11 +1018,9 @@ if __name__ == '__main__':
         os.environ['EASYBIO_PORT'] = str(port)
     
     if frozen or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
-        # Start the background heartbeat monitor
         monitor_thread = threading.Thread(target=monitor_heartbeat, daemon=True)
         monitor_thread.start()
         
-        # 2. Auto-launch the browser to the dynamic port (after a 1.5s delay to let Flask boot)
         target_url = f'http://127.0.0.1:{port}'
         threading.Timer(1.5, lambda: webbrowser.open(target_url)).start()
         print(f"\n=======================================================")
@@ -903,5 +1028,4 @@ if __name__ == '__main__':
         print(f"Opening automatically in your browser at: {target_url}")
         print(f"=======================================================\n")
     
-    # 3. Bind Flask to the synchronized dynamic port
     app.run(debug=not frozen, use_reloader=not frozen, host='127.0.0.1', port=port)

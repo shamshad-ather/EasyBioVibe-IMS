@@ -336,7 +336,19 @@ const DB = {
 
 const STUDY_TYPES = ['Research','Diagnostics','Training','Validation','Quality Control','Utility','Other'];
 const MATERIAL_TYPES = ['Reagent','Chemical','Plasticware','Glassware','Consumable','Kit','Buffer','Other'];
-const UNITS = ['Nos','uL','mL','L','mg','g','kg','Box','Pack','Bottle','Rxns','Tube','Vial','Kit'];
+const UNITS = ['Nos','uL','mL','L','ug','mg','g','kg','Box','Pack','Bottle','Rxns','Tube','Vial','Kit'];
+
+const UNIT_FAMILIES = {
+    mass: ['kg', 'g', 'mg', 'ug'],
+    volume: ['L', 'mL', 'uL']
+};
+
+function getUnitFamily(unit) {
+    if (UNIT_FAMILIES.mass.includes(unit)) return UNIT_FAMILIES.mass;
+    if (UNIT_FAMILIES.volume.includes(unit)) return UNIT_FAMILIES.volume;
+    return [unit];
+}
+
 const DOC_TYPES = ['SOP','SDS','Manual','Certificate','Protocol','Other'];
 const ROLES = ['Admin','Manager'];
 const DESIGNATIONS = ['HoD', 'Faculty', 'Lab Tech', 'Student', 'JR', 'SR', 'Research Associate', 'Project Associate', 'Research Assistant', 'Project Assistant', 'Intern', 'IT personal', 'Other'];
@@ -505,8 +517,8 @@ async function loadRealData() {
             Model: i.model || i.Model || '',
             MaterialType: i.category || i.MaterialType || 'Other',
             Unit: i.base_unit || i.Unit || 'Nos',
-            VendorID: i.vendor_id ? String(i.vendor_id) : (i.VendorID ? String(i.VendorID) : ''),
-            AlertThreshold: i.pack_size || i.AlertThreshold || 15,
+            AlertThreshold: parseFloat(i.alert_threshold || i.AlertThreshold || 15),
+            PackQty: parseFloat(i.pack_qty || 1),
             Status: i.status || i.Status || 'Active'
         }));
 
@@ -519,6 +531,7 @@ async function loadRealData() {
             DepartmentID: b.department_id ? String(b.department_id) : (b.DepartmentID ? String(b.DepartmentID) : ''),
             StudyID: b.study_id ? String(b.study_id) : (b.StudyID ? String(b.StudyID) : ''),
             PurchaseOrderNo: b.po_number || b.PurchaseOrderNo || '',
+            VendorID: b.vendor_id ? String(b.vendor_id) : (b.VendorID ? String(b.VendorID) : ''),
             LotNumber: b.lot_number || b.LotNumber || '',
             ExpiryDate: b.expiry_date || b.ExpiryDate || '',
             DateFirstUsed: b.date_first_used || b.DateFirstUsed || '',
@@ -802,9 +815,6 @@ async function saveProfile(e) {
     };
 
     try {
-        // Self-service edits go through /api/profile now, not the
-        // admin-only /api/users -- a non-admin editing their own info can
-        // no longer accidentally (or maliciously) touch role/status here.
         const res = await fetch('/api/profile', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -908,7 +918,7 @@ function renderCurrentPage() {
         if (el && el.tagName === 'INPUT') {
             el.focus();
             const len = el.value.length;
-            if (el.setSelectionRange) el.setSelectionRange(len, len); // Keeps cursor at the end of the text
+            if (el.setSelectionRange) el.setSelectionRange(len, len);
         }
     }
 
@@ -959,7 +969,7 @@ function renderHome(content) {
                 <div class="label">Usage Records</div>
                 <div class="value">${DB.usage.length}</div>
             </div>
-            <div class="stat-card" style="cursor:pointer; transition:all 0.2s;" onmouseover="this.style.borderColor='var(--danger)'" onmouseout="this.style.borderColor='var(--gray-200)'" onclick="renderReport('lowStock')">
+            <div class="stat-card" style="cursor:pointer; transition:all 0.2s;" onmouseover="this.style.borderColor='var(--danger)'" onmouseout="this.style.borderColor='var(--gray-200)'" onclick="navigateTo('reports', {reportId: 'lowStock'})">
                 <div class="label">Low Stock Alerts</div>
                 <div class="value alert">${DB.inventory.filter(i=>getAlertStatus(i.id)==='low').length}</div>
             </div>
@@ -1151,6 +1161,7 @@ function updateGlobalUsageBatches() {
     
     if (!invId) { 
         batchSelect.innerHTML = '<option value="">Select Batch (Select material first)</option>'; 
+        unitSelect.innerHTML = '<option value="">Select Unit</option>';
         return; 
     }
     
@@ -1161,7 +1172,8 @@ function updateGlobalUsageBatches() {
     
     const inv = getLookup(invId, 'inventory');
     if (inv) {
-        unitSelect.innerHTML = UNITS.map(u => `<option value="${u}" ${u===inv.Unit?'selected':''}>${u}</option>`).join('');
+        const allowedUnits = getUnitFamily(inv.Unit);
+        unitSelect.innerHTML = allowedUnits.map(u => `<option value="${u}" ${u===inv.Unit?'selected':''}>${u}</option>`).join('');
     }
 }
 
@@ -1172,23 +1184,35 @@ async function saveGlobalUsage(e) {
     
     const study = getLookup(data.StudyID, 'studies');
     const batch = getLookup(data.BatchID, 'batches');
-    const qty = parseFloat(data.QuantityUsed);
+    const qtyRaw = parseFloat(data.QuantityUsed);
 
-    if (!batch || parseFloat(batch.CurrentQuantity) < qty) {
-        showToast('Insufficient quantity in selected batch', 'error');
+    // 1. Check if batch and study exist first
+    if (!batch) {
+        showToast('Invalid Batch selected', 'error');
         return;
     }
-    
     if (!study) {
         showToast('Invalid Study selected', 'error');
         return;
     }
 
+    // 2. Perform the normalized unit math
+    const usedMult = getUnitMultiplier(data.Unit);
+    const batchMult = getUnitMultiplier(batch.Unit);
+    const normalizedQty = (qtyRaw * usedMult) / batchMult;
+
+    // 3. Check against the properly converted quantity
+    if (parseFloat(batch.CurrentQuantity) < normalizedQty) {
+        showToast(`Insufficient quantity. Tried to use ${normalizedQty} ${batch.Unit}, but only ${batch.CurrentQuantity} ${batch.Unit} remains.`, 'error');
+        return;
+    }
+    
+    // 4. Send the payload to the server
     const payload = {
         inventory_id: parseInt(data.InventoryID),
         batch_id: parseInt(data.BatchID),
         batch_code: batch.BatchCode,
-        quantity_used: qty,
+        quantity_used: qtyRaw,
         unit: data.Unit,
         user_id: data.UserID,
         study_id: data.StudyID,
@@ -1206,7 +1230,7 @@ async function saveGlobalUsage(e) {
         const result = await res.json();
 
         if (result.status === 'success') {
-            await logHistory('Usage', batch.BatchCode, 'Recorded', '', qty + ' ' + data.Unit);
+            await logHistory('Usage', batch.BatchCode, 'Recorded', '', qtyRaw + ' ' + data.Unit);
             await loadRealData();
             showToast('Usage recorded & stock deducted!', 'success');
             closeModal();
@@ -1433,15 +1457,17 @@ function showMaterialHistory(inventoryId) {
             <table class="data-table" style="margin-bottom:24px;font-size:12px;">
                 <thead><tr><th>SN</th><th>Batch</th><th>Lot</th><th>Expiry</th><th>Received</th><th>Remaining</th></tr></thead>
                 <tbody>
-                    ${batches.map(b => `
+                    ${batches.map((b, idx) => `
                         <tr>
+                            <td>${idx + 1}</td>
+                            <td><span class="code-display">${b.BatchCode}</span></td>
                             <td>${escapeHtml(b.LotNumber)}</td>
                             <td>${formatDate(b.ExpiryDate)}</td>
                             <td>${b.QuantityReceived} ${b.Unit}</td>
                             <td class="qty-display ${b.CurrentQuantity <= b.QuantityReceived * 0.15 ? 'low' : ''}">${b.CurrentQuantity} ${b.Unit}</td>
                         </tr>
                     `).join('')}
-                    ${batches.length === 0 ? '<tr><td colspan="5" style="text-align:center;">No active batches</td></tr>' : ''}
+                    ${batches.length === 0 ? '<tr><td colspan="6" style="text-align:center;">No active batches</td></tr>' : ''}
                 </tbody>
             </table>
             <h4 style="margin-bottom:12px;font-size:14px;">Usage History</h4>
@@ -1465,7 +1491,7 @@ function showMaterialHistory(inventoryId) {
                             const s = getLookup(h.StudyID, 'studies');
                             const b = getLookup(h.BatchID, 'batches');
                             const batchLabel = h.BatchCode || (b ? b.BatchCode : 'N/A');
-                            const balanceLabel = (h.Balance !== null && h.Balance !== undefined) ? (h.Balance + ' ' + h.Unit) : 'N/A';
+                            const balanceLabel = (h.Balance !== null && h.Balance !== undefined) ? (h.Balance + ' ' + (b ? b.Unit : h.Unit)) : 'N/A';
                             return `
                             <tr>
                                 <td>${formatDate(h.UsageDate)}<br><span style="font-size:11px;color:var(--gray-400);">${h.UsageTime}</span></td>
@@ -2094,7 +2120,12 @@ async function renderInventory(content) {
                 <option value="">All Types</option>
                 ${MATERIAL_TYPES.map(t=>`<option value="${t}" ${filterType===t?'selected':''}>${t}</option>`).join('')}
             </select>
-            ${isAdmin() ? `<button class="btn btn-secondary" onclick="openInventoryModal()"><svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg> Add Material</button>` : ''}
+            ${isAdmin() ? `
+            <input type="file" id="bulkUploadFile" accept=".csv" style="display:none" onchange="handleBulkUpload(event)">
+            <button class="btn btn-secondary" onclick="window.location.href='/api/inventory/template'">Download Template</button>
+            <button class="btn btn-secondary" onclick="document.getElementById('bulkUploadFile').click()">Upload Excel/CSV</button>
+            <button class="btn btn-primary" onclick="openInventoryModal()"><svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg> Add Material</button>
+            ` : ''}
         </div>
         
         <div class="card">
@@ -2144,7 +2175,8 @@ function openInventoryModal(id) {
                 </div>
                 <div class="form-group">
                     <label>Material Name <span class="required">*</span></label>
-                    <input type="text" class="form-control" name="MaterialName" value="${item?escapeHtml(item.MaterialName):''}" required>
+                    <input type="text" class="form-control" name="MaterialName" value="${item?escapeHtml(item.MaterialName):''}" required oninput="checkDuplicateMaterial()">
+                    <div id="duplicateWarning"></div>
                 </div>
                 <div class="form-group">
                     <label>Material Type <span class="required">*</span></label>
@@ -2160,19 +2192,19 @@ function openInventoryModal(id) {
                     <label>Model</label>
                     <input type="text" class="form-control" name="Model" value="${item?escapeHtml(item.Model):''}">
                 </div>
+                
+                <div class="form-group">
+                    <label>Quantity Per Pack/Box/Bottle/Kit Size <span class="required">*</span></label>
+                    <input type="number" class="form-control" name="PackQty" step="0.01" min="0.01" value="${item?item.PackQty:1}" required>
+                </div>
                 <div class="form-group">
                     <label>Unit <span class="required">*</span></label>
                     <select class="form-control" name="Unit" required>
                         ${UNITS.map(u=>`<option value="${u}" ${item&&item.Unit===u?'selected':''}>${u}</option>`).join('')}
                     </select>
+                    <p style="font-size:11px;color:var(--gray-500);margin-top:4px;">Note: For reagents or kits, enter the number of reactions rather than volume or weight.</p>
                 </div>
-                <div class="form-group">
-                    <label>Vendor</label>
-                    <select class="form-control" name="VendorID">
-                        <option value="">Select Vendor</option>
-                        ${DB.vendors.map(v=>`<option value="${v.id}" ${item&&String(item.VendorID)===String(v.id)?'selected':''}>${escapeHtml(v.VendorName)}</option>`).join('')}
-                    </select>
-                </div>
+
                 <div class="form-group">
                     <label>Alert Threshold (%)</label>
                     <input type="number" class="form-control" name="AlertThreshold" min="1" max="100" value="${item?item.AlertThreshold:15}">
@@ -2197,6 +2229,132 @@ function openInventoryModal(id) {
     `);
 }
 
+function checkDuplicateMaterial() {
+    const input = document.querySelector('#inventoryForm [name="MaterialName"]').value.toLowerCase();
+    const warningDiv = document.getElementById('duplicateWarning');
+    
+    if(input.length < 3) { 
+        warningDiv.innerHTML = ''; 
+        return; 
+    }
+    
+    const matches = DB.inventory.filter(i => i.MaterialName.toLowerCase().includes(input));
+    
+    if(matches.length > 0) {
+        warningDiv.innerHTML = `
+            <div style="margin-top:6px; padding:8px; background:var(--warning-light); color:var(--warning); border-radius:var(--radius-sm); font-size:12px;">
+                <strong>Warning:</strong> Similar items already exist: ${matches.map(m => escapeHtml(m.MaterialName)).join(', ')}. 
+                <br><a href="#" style="color:var(--primary); font-weight:600;" onclick="closeModal(); setTimeout(() => openBatchModal(), 200);">Add a batch to existing item instead?</a>
+            </div>`;
+    } else {
+        warningDiv.innerHTML = '';
+    }
+}
+
+async function handleBulkUpload(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    showToast('Parsing file & running similarity checks...', 'info');
+
+    try {
+        const res = await fetch('/api/inventory/upload', {
+            method: 'POST',
+            body: formData
+        });
+        const result = await res.json();
+        
+        if (result.status === 'success') {
+            openBulkReviewModal(result.data);
+        } else {
+            showToast(result.message, 'error');
+        }
+    } catch (err) {
+        showToast('Connection error during upload.', 'error');
+    }
+    e.target.value = ''; // Reset input
+}
+
+function openBulkReviewModal(rows) {
+    // Store globally so the save function can grab it
+    window._bulkStagingData = rows; 
+
+    openModal('Review Inventory Upload', `
+        <p style="font-size:13px; color:var(--gray-500); margin-bottom:16px;">
+            Review your uploaded materials. Items with a match score > 80% are likely duplicates. 
+            Tick <strong>Merge</strong> to skip creating a new master item so you can add it as a new batch later.
+        </p>
+        <div class="table-container" style="max-height:400px; overflow-y:auto; border:1px solid var(--gray-200); border-radius:var(--radius-md);">
+            <table class="data-table">
+                <thead style="position:sticky; top:0; z-index:1;">
+                    <tr><th>Material (Upload)</th><th>Size & Unit</th><th>Match Score</th><th>Merge?</th></tr>
+                </thead>
+                <tbody>
+                    ${rows.map((r, idx) => {
+                        const isDuplicate = r.MatchScore > 80;
+                        const matchUI = isDuplicate 
+                            ? `<div style="color:var(--danger); font-weight:600;">${r.MatchScore}% Match</div><div style="font-size:11px; color:var(--gray-500);">Found: ${escapeHtml(r.MatchedName)}</div>`
+                            : `<div style="color:var(--success); font-weight:600;">${r.MatchScore}% (New)</div>`;
+                            
+                        const mergeUI = isDuplicate
+                            ? `<label style="display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" id="mergeCheck_${idx}" checked> <span style="font-size:12px;">Merge (Skip)</span></label>`
+                            : `<span style="font-size:12px; color:var(--gray-400);">N/A</span>`;
+
+                        return `
+                        <tr style="${isDuplicate ? 'background:var(--danger-light);' : ''}">
+                            <td><strong>${escapeHtml(r.MaterialName)}</strong><br><span style="font-size:11px; color:var(--gray-500);">${escapeHtml(r.MaterialType)} | ${escapeHtml(r.Make)}</span></td>
+                            <td>${r.PackQty} ${escapeHtml(r.Unit)}</td>
+                            <td>${matchUI}</td>
+                            <td>${mergeUI}</td>
+                        </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>
+    `, 'modal-xl', `
+        <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="commitBulkUpload()">Confirm & Save to Inventory</button>
+    `);
+}
+
+async function commitBulkUpload() {
+    const rows = window._bulkStagingData;
+    
+    // Apply user choices from the checkboxes
+    rows.forEach((r, idx) => {
+        const checkbox = document.getElementById(`mergeCheck_${idx}`);
+        if (checkbox && checkbox.checked) {
+            r.MergeWithID = true;
+        } else {
+            r.MergeWithID = false;
+        }
+    });
+
+    try {
+        const res = await fetch('/api/inventory/bulk', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rows: rows })
+        });
+        const result = await res.json();
+        
+        if (result.status === 'success') {
+            await loadRealData();
+            showToast(result.message, 'success');
+            closeModal();
+            renderCurrentPage();
+        } else {
+            showToast(result.message, 'error');
+        }
+    } catch (err) {
+        showToast('Connection error during bulk save.', 'error');
+    }
+}
+
 async function saveInventory(e) {
     e.preventDefault();
     const form = document.getElementById('inventoryForm');
@@ -2210,9 +2368,9 @@ async function saveInventory(e) {
         make: data.Make || '',
         model: data.Model || '',
         category: data.MaterialType, 
-        pack_size: parseFloat(data.AlertThreshold || 15),
+        alert_threshold: parseFloat(data.AlertThreshold || 15),
         base_unit: data.Unit,
-        vendor_id: data.VendorID ? parseInt(data.VendorID) : null
+        pack_qty: parseFloat(data.PackQty || 1)
     };
 
     try {
@@ -2228,8 +2386,7 @@ async function saveInventory(e) {
             await logChangedFields('Inventory', code, item, {
                 MaterialName: payload.material_name, Make: payload.make, Model: payload.model,
                 MaterialType: payload.category, Unit: payload.base_unit,
-                VendorID: payload.vendor_id ? String(payload.vendor_id) : '',
-                AlertThreshold: String(payload.pack_size)
+                AlertThreshold: String(payload.alert_threshold), PackQty: String(payload.pack_qty)
             });
             await loadRealData();
             showToast('Material saved successfully!', 'success');
@@ -2323,7 +2480,13 @@ function renderBatches(content) {
 
 function openBatchModal(id) {
     const item = id ? getLookup(id, 'batches') : null;
+    const inv = item ? DB.inventory.find(i => i.id === item.InventoryID) : null;
+    
+    // Back-calculate the initial packs for the UI if editing an existing batch
+    const initialPacks = (item && inv && inv.PackQty) ? (item.QuantityReceived / inv.PackQty) : '';
+    const initialDisplay = item ? `Total: <strong>${item.QuantityReceived} ${item.Unit}</strong>` : `Total: <strong>0</strong>`;
     const today = new Date().toISOString().split('T')[0];
+    
     openModal(item ? 'Edit Batch' : 'Add Batch', `
         <form id="batchForm" onsubmit="saveBatch(event)">
             <div class="form-grid">
@@ -2333,7 +2496,7 @@ function openBatchModal(id) {
                 </div>
                 <div class="form-group">
                     <label>Material <span class="required">*</span></label>
-                    <select class="form-control" name="InventoryID" required>
+                    <select class="form-control" name="InventoryID" required onchange="updateBatchCalculation()">
                         <option value="">Select Material</option>
                         ${DB.inventory.filter(i=>i.Status==='Active').map(i=>`<option value="${i.id}" ${item&&item.InventoryID===i.id?'selected':''}>${escapeHtml(i.MaterialName)}</option>`).join('')}
                     </select>
@@ -2346,10 +2509,17 @@ function openBatchModal(id) {
                     </select>
                 </div>
                 <div class="form-group">
-                    <label>Associated Study (Optional)</label>
-                    <select class="form-control" name="StudyID">
+                    <label>Associated Study <span class="required">*</span></label>
+                    <select class="form-control" name="StudyID" required>
                         <option value="">Select Study</option>
                         ${DB.studies.filter(s=>s.Status==='Active').map(s=>`<option value="${s.id}" ${item&&String(item.StudyID)===String(s.id)?'selected':''}>${escapeHtml(s.StudyName)}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Vendor</label>
+                    <select class="form-control" name="VendorID">
+                        <option value="">Select Vendor</option>
+                        ${DB.vendors.map(v=>`<option value="${v.id}" ${item&&String(item.VendorID)===String(v.id)?'selected':''}>${escapeHtml(v.VendorName)}</option>`).join('')}
                     </select>
                 </div>
                 <div class="form-group">
@@ -2364,24 +2534,18 @@ function openBatchModal(id) {
                     <label>Expiry Date <span class="required">*</span></label>
                     <input type="date" class="form-control" name="ExpiryDate" value="${item?item.ExpiryDate:today}" required>
                 </div>
-                <div class="form-group">
-                    <label>Date First Used</label>
-                    <input type="date" class="form-control" name="DateFirstUsed" value="${item?item.DateFirstUsed:''}">
+                
+                <!-- NEW NX MULTIPLICATION LOGIC -->
+                <div class="form-group" style="background:var(--gray-50); padding:12px; border-radius:var(--radius-md); border:1px solid var(--gray-200);">
+                    <label>Number of Packs/Box/Bottle/Kit Received <span class="required">*</span></label>
+                    <input type="number" class="form-control" name="NumPacks" step="0.01" min="0.01" required oninput="updateBatchCalculation()" placeholder="e.g., 5" value="${initialPacks}">
+                    <div id="batchCalcDisplay" style="margin-top:8px; font-size:13px; color:var(--primary); text-align:right;">${initialDisplay}</div>
+                    
+                    <!-- Hidden fields to store the actual computed values to pass to the DB -->
+                    <input type="hidden" name="QuantityReceived" id="batchQuantityReceived" value="${item?item.QuantityReceived:''}">
+                    <input type="hidden" name="Unit" id="batchUnitHidden" value="${item?item.Unit:''}">
                 </div>
-                <div class="form-group">
-                    <label>Quantity Received <span class="required">*</span></label>
-                    <input type="number" class="form-control" name="QuantityReceived" step="0.01" min="0.01" value="${item?item.QuantityReceived:''}" required>
-                </div>
-                <div class="form-group">
-                    <label>Current Quantity</label>
-                    <input type="number" class="form-control" name="CurrentQuantity" step="0.01" min="0" value="${item?item.CurrentQuantity:''}">
-                </div>
-                <div class="form-group">
-                    <label>Unit <span class="required">*</span></label>
-                    <select class="form-control" name="Unit" required>
-                        ${UNITS.map(u=>`<option value="${u}" ${item&&item.Unit===u?'selected':''}>${u}</option>`).join('')}
-                    </select>
-                </div>
+                
                 <div class="form-group">
                     <label>Status</label>
                     <select class="form-control" name="Status">
@@ -2405,19 +2569,38 @@ function openBatchModal(id) {
 
 async function saveBatch(e) {
     e.preventDefault();
-    const data = Object.fromEntries(new FormData(document.getElementById('batchForm')));
+    const form = document.getElementById('batchForm');
+    const data = Object.fromEntries(new FormData(form));
     const item = data.id ? getLookup(data.id, 'batches') : null;
+    
+    let receivedQty = parseFloat(data.QuantityReceived);
+    let currentQty = receivedQty;
+
+    // SMART DELTA LOGIC: Protect existing stock deductions
+    if (item) {
+        const oldReceived = parseFloat(item.QuantityReceived);
+        const delta = receivedQty - oldReceived; // Will be 0 if NumPacks wasn't changed
+        currentQty = parseFloat(item.CurrentQuantity) + delta;
+        
+        // Safety check so they can't reduce received packs below what has already been consumed
+        if (currentQty < 0) {
+            showToast('Error: Cannot reduce received packs below the amount already consumed.', 'error');
+            return;
+        }
+    }
+
     const payload = {
         id: data.id ? parseInt(data.id) : null,
         inventory_id: data.InventoryID,
         department_id: data.DepartmentID || null,
         study_id: data.StudyID || null,
+        vendor_id: data.VendorID ? parseInt(data.VendorID) : null,
         po_number: data.PurchaseOrderNo,
         lot_number: data.LotNumber,
         expiry_date: data.ExpiryDate,
         date_first_used: data.DateFirstUsed || null,
-        quantity_received: parseFloat(data.QuantityReceived),
-        current_quantity: data.CurrentQuantity ? parseFloat(data.CurrentQuantity) : parseFloat(data.QuantityReceived),
+        quantity_received: receivedQty,
+        current_quantity: currentQty,
         unit: data.Unit,
         status: data.Status || 'Active',
         remarks: data.Remarks || ''
@@ -2449,6 +2632,36 @@ async function saveBatch(e) {
     }
 }
 
+// ====================== CRUD: CALCULATIONS ======================
+function updateBatchCalculation() {
+    const invId = document.querySelector('#batchForm [name="InventoryID"]').value;
+    const packsReceived = parseFloat(document.querySelector('#batchForm [name="NumPacks"]').value) || 0;
+    const inv = DB.inventory.find(i => i.id === invId);
+    
+    const displayObj = document.getElementById('batchCalcDisplay');
+    const qtyInput = document.getElementById('batchQuantityReceived');
+    const unitHidden = document.getElementById('batchUnitHidden');
+    
+    if (inv && packsReceived > 0) {
+        const total = packsReceived * inv.PackQty;
+        displayObj.innerHTML = `Total: <strong>${total} ${inv.Unit}</strong>`;
+        qtyInput.value = total;
+        if (unitHidden) unitHidden.value = inv.Unit;
+    } else {
+        displayObj.innerHTML = 'Total: <strong>0</strong>';
+        qtyInput.value = '';
+        if (unitHidden) unitHidden.value = '';
+    }
+}
+
+function getUnitMultiplier(unit) {
+    const mass = {'kg': 1000.0, 'g': 1.0, 'mg': 0.001, 'ug': 0.000001};
+    const vol = {'L': 1.0, 'mL': 0.001, 'uL': 0.000001};
+    
+    if (mass[unit] !== undefined) return mass[unit];
+    if (vol[unit] !== undefined) return vol[unit];
+    return 1.0; // For discrete units like Nos, Rxns, etc.
+}
 // ==================== CRUD: VENDORS ====================
 function renderVendors(content) {
     const search = (document.getElementById('searchVendor')?.value || '').toLowerCase();
@@ -2764,7 +2977,8 @@ function renderGlobalUsage(content) {
                             const inv = getLookup(u.InventoryID, 'inventory');
                             const user = getLookup(u.UserID, 'users');
                             const study = getLookup(u.StudyID, 'studies');
-                            const balanceLabel = (u.Balance !== null && u.Balance !== undefined) ? (u.Balance + ' ' + u.Unit) : 'N/A';
+                            const batch = getLookup(u.BatchID, 'batches');
+                            const balanceLabel = (u.Balance !== null && u.Balance !== undefined) ? (u.Balance + ' ' + (batch ? batch.Unit : u.Unit)) : 'N/A';
                             
                             return `<tr>
                                 <td>${idx + 1}</td>
@@ -2919,26 +3133,91 @@ function renderReports(content) {
                 <h3>Department-wise Consumption</h3>
                 <p>Material usage breakdown by department</p>
             </div>
+            
+            <!-- NEW USAGE RECORD REPORT CARD -->
+            <div class="report-card" onclick="renderReport('usageRecord')">
+                <div class="icon" style="background:var(--primary-light);color:var(--primary-dark);">
+                    <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
+                </div>
+                <h3>Usage Records</h3>
+                <p>Printable ledger of all laboratory material consumption</p>
+            </div>
         </div>
         <div id="reportContent" style="margin-top:24px;"></div>
     `;
+
+    // Automatically load a report if drilled down from the home page
+    if (drillContext.reportId) {
+        setTimeout(() => {
+            renderReport(drillContext.reportId);
+            drillContext.reportId = null; // Clear it out so it doesn't get stuck
+        }, 50);
+    }
 }
 
 function renderReport(type) {
     const container = document.getElementById('reportContent');
     if (!container) return;
 
+    // Standard UI Header for all reports (hidden during print)
+    const reportControls = `
+        <style media="print">.report-controls { display: none !important; }</style>
+        <div class="report-controls" style="display:flex; justify-content:space-between; margin-bottom:16px;">
+            <div class="search-box" style="width:300px;">
+                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                <input type="text" class="form-control" id="reportSearch" placeholder="Search / Filter this report..." oninput="filterReportTable()">
+            </div>
+            <button class="btn btn-secondary" onclick="window.print()">
+                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
+                Print View
+            </button>
+        </div>
+    `;
+
     switch(type) {
+        case 'usageRecord':
+            const usageItems = [...DB.usage].sort((a,b) => new Date(b.UsageDate) - new Date(a.UsageDate));
+            container.innerHTML = `
+                <div class="card">
+                    <div class="card-header"><h2>Usage Records Report</h2></div>
+                    <div class="card-body">
+                        ${reportControls}
+                        <table class="data-table">
+                            <thead><tr><th>Date</th><th>Material</th><th>Batch</th><th>Used By</th><th>Study</th><th>Qty Used</th><th>Balance</th></tr></thead>
+                            <tbody>
+                                ${usageItems.map(u => {
+                                    const inv = getLookup(u.InventoryID, 'inventory');
+                                    const user = getLookup(u.UserID, 'users');
+                                    const study = getLookup(u.StudyID, 'studies');
+                                    const batch = getLookup(u.BatchID, 'batches');
+                                    const balanceLabel = (u.Balance !== null && u.Balance !== undefined) ? (u.Balance + ' ' + (batch ? batch.Unit : u.Unit)) : 'N/A';
+                                    return `<tr>
+                                        <td>${formatDate(u.UsageDate)}</td>
+                                        <td>${inv ? escapeHtml(inv.MaterialName) : 'N/A'}</td>
+                                        <td><span class="code-display">${escapeHtml(u.BatchCode)}</span></td>
+                                        <td>${user ? escapeHtml(user.UserName) : 'N/A'}</td>
+                                        <td>${study ? escapeHtml(study.StudyName) : 'N/A'}</td>
+                                        <td class="qty-display">${u.QuantityUsed} ${u.Unit}</td>
+                                        <td class="qty-display">${balanceLabel}</td>
+                                    </tr>`;
+                                }).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+            break;
         case 'currentStock':
             const stockItems = DB.inventory.filter(i => i.Status === 'Active');
             container.innerHTML = `
                 <div class="card">
-                    <div class="card-header"><h2>Current Stock Report</h2><button class="btn btn-sm btn-secondary" onclick="window.print()">Print</button></div>
+                    <div class="card-header"><h2>Current Stock Report</h2></div>
                     <div class="card-body">
+                        ${reportControls}
                         <table class="data-table">
                             <thead><tr><th>SN</th><th>Code</th><th>Material</th><th>Type</th><th>Total Received</th><th>Current Qty</th><th>Used</th><th>Unit</th><th>Alert</th></tr></thead>
                             <tbody>
-                                ${stockItems.map((i, idx) => { // <-- Added (i, idx) here
+                                ${stockItems.map((i, idx) => {
                                     const totalRec = getInventoryTotalReceived(i.id);
                                     const totalCur = getInventoryTotalQty(i.id);
                                     const used = totalRec - totalCur;
@@ -2966,11 +3245,12 @@ function renderReport(type) {
                 <div class="card">
                     <div class="card-header"><h2>Low Stock Alert Report</h2><span class="badge badge-danger">${lowItems.length} items</span></div>
                     <div class="card-body">
+                        ${reportControls}
                         ${lowItems.length === 0 ? '<div class="alert alert-success">All materials are above alert threshold</div>' : `
                         <table class="data-table">
                             <thead><tr><th>SN</th><th>Code</th><th>Material</th><th>Current Qty</th><th>Threshold</th><th>Unit</th><th>Batches</th></tr></thead>
                             <tbody>
-                                ${lowItems.map((i, idx) => { // <-- Added (i, idx) here
+                                ${lowItems.map((i, idx) => {
                                     const batches = DB.batches.filter(b => b.InventoryID === i.id && b.Status === 'Active');
                                     return `<tr>
                                         <td>${idx + 1}</td>
@@ -2999,11 +3279,12 @@ function renderReport(type) {
                 <div class="card">
                     <div class="card-header"><h2>Expiry Alert Report</h2><span class="badge badge-warning">${expBatches.length} batches</span></div>
                     <div class="card-body">
+                        ${reportControls}
                         ${expBatches.length === 0 ? '<div class="alert alert-success">No batches nearing expiration</div>' : `
                         <table class="data-table">
                             <thead><tr><th>SN</th><th>Batch</th><th>Material</th><th>Lot</th><th>Expiry</th><th>Days Left</th><th>Current Qty</th></tr></thead>
                             <tbody>
-                                ${expBatches.map((b, idx) => { // <-- Added (b, idx) here
+                                ${expBatches.map((b, idx) => {
                                     const inv = getLookup(b.InventoryID, 'inventory');
                                     const exp = new Date(b.ExpiryDate);
                                     const daysLeft = Math.ceil((exp - today) / (1000*60*60*24));
@@ -3034,10 +3315,11 @@ function renderReport(type) {
                 <div class="card">
                     <div class="card-header"><h2>Study-wise Consumption Report</h2></div>
                     <div class="card-body">
+                        ${reportControls}
                         <table class="data-table">
                             <thead><tr><th>SN</th><th>Study</th><th>Type</th><th>Total Records</th><th>Materials Used</th></tr></thead>
                             <tbody>
-                                ${Object.entries(studyUsage).map(([studyId, usages], idx) => { // <-- Added idx here
+                                ${Object.entries(studyUsage).map(([studyId, usages], idx) => {
                                     const study = getLookup(studyId, 'studies');
                                     const materials = [...new Set(usages.map(u => u.InventoryID))].length;
                                     return `<tr>
@@ -3064,10 +3346,11 @@ function renderReport(type) {
                 <div class="card">
                     <div class="card-header"><h2>Faculty-wise Consumption Report</h2></div>
                     <div class="card-body">
+                        ${reportControls}
                         <table class="data-table">
                             <thead><tr><th>SN</th><th>Faculty</th><th>Department</th><th>Total Records</th><th>Materials Used</th></tr></thead>
                             <tbody>
-                                ${Object.entries(facUsage).map(([facId, usages], idx) => { // <-- Added idx here
+                                ${Object.entries(facUsage).map(([facId, usages], idx) => {
                                     const fac = getLookup(facId, 'faculty');
                                     const dept = fac ? getLookup(fac.DepartmentID, 'departments') : null;
                                     const materials = [...new Set(usages.map(u => u.InventoryID))].length;
@@ -3095,10 +3378,11 @@ function renderReport(type) {
                 <div class="card">
                     <div class="card-header"><h2>Department-wise Consumption Report</h2></div>
                     <div class="card-body">
+                        ${reportControls}
                         <table class="data-table">
                             <thead><tr><th>SN</th><th>Department</th><th>Total Records</th><th>Materials Used</th><th>Users</th></tr></thead>
                             <tbody>
-                                ${Object.entries(deptUsage).map(([deptId, usages], idx) => { // <-- Added idx here
+                                ${Object.entries(deptUsage).map(([deptId, usages], idx) => {
                                     const dept = getLookup(deptId, 'departments');
                                     const materials = [...new Set(usages.map(u => u.InventoryID))].length;
                                     const users = [...new Set(usages.map(u => u.UserID))].length;
@@ -3119,6 +3403,15 @@ function renderReport(type) {
     }
 }
 
+function filterReportTable() {
+    const term = document.getElementById('reportSearch').value.toLowerCase();
+    const rows = document.querySelectorAll('#reportContent .data-table tbody tr');
+    
+    rows.forEach(row => {
+        const text = row.textContent.toLowerCase();
+        row.style.display = text.includes(term) ? '' : 'none';
+    });
+}
 
 function attachTableSort() {
     document.querySelectorAll('.data-table th').forEach(th => {
