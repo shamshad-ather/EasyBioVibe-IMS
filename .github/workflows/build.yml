@@ -10,16 +10,16 @@ jobs:
   compile:
     runs-on: ${{ matrix.os }}
     permissions:
-      contents: write  # Crucial for allowing the bot to upload Release files
+      contents: write
     strategy:
-      fail-fast: false # Prevents one OS failure from canceling the successful ones
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             name: linux
             separator: ":"
             ext: ""
-            icon: "assets/icon.png"
+            icon: "assets/icon_256.png"
           - os: windows-latest
             name: windows
             separator: ";"
@@ -29,7 +29,7 @@ jobs:
             name: macos
             separator: ":"
             ext: ""
-            icon: "assets/icon.icns"
+            icon: ""
 
     steps:
       - name: Checkout Source Code
@@ -52,11 +52,28 @@ jobs:
           VERSION=$(cat VERSION.md)
           echo "APP_VERSION=$VERSION" >> $GITHUB_ENV
 
-      - name: Build Executable with PyInstaller
+      - name: Build Executable with PyInstaller (Windows & Linux)
+        if: matrix.os != 'macos-latest'
         run: >
           pyinstaller --noconfirm --onefile --windowed
           --name "EasyBio.Vibe-${{ env.APP_VERSION }}-${{ matrix.name }}${{ matrix.ext }}"
           --icon "${{ matrix.icon }}"
+          --add-data "app/templates${{ matrix.separator }}templates"
+          --add-data "app/static${{ matrix.separator }}static"
+          --add-data "VERSION.md${{ matrix.separator }}."
+          --hidden-import "app.routes.auth"
+          --hidden-import "app.routes.system"
+          --hidden-import "app.routes.masters"
+          --hidden-import "app.routes.inventory"
+          --hidden-import "app.routes.transactions"
+          --hidden-import "app.routes.equipment"
+          run.py
+
+      - name: Build Executable with PyInstaller (macOS)
+        if: matrix.os == 'macos-latest'
+        run: >
+          pyinstaller --noconfirm --onefile
+          --name "EasyBio.Vibe-${{ env.APP_VERSION }}-${{ matrix.name }}${{ matrix.ext }}"
           --add-data "app/templates${{ matrix.separator }}templates"
           --add-data "app/static${{ matrix.separator }}static"
           --add-data "VERSION.md${{ matrix.separator }}."
