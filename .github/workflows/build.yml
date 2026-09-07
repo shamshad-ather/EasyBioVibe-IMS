@@ -85,10 +85,43 @@ jobs:
           --hidden-import "app.routes.equipment"
           run.py
 
+      - name: Package Linux Desktop Installer (Tarball)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          mkdir -p dist/linux_installer
+          # Move fresh executable and rename it to what install.sh expects
+          mv "dist/EasyBio.Vibe-${{ env.APP_VERSION }}-linux" "dist/linux_installer/EasyBioVibe-IMS"
+          # Copy the packaging assets
+          cp packaging/linux/easybiovibe-ims.desktop dist/linux_installer/
+          cp packaging/linux/icon_256.png dist/linux_installer/
+          cp packaging/linux/install.sh dist/linux_installer/
+          cp packaging/linux/uninstall.sh dist/linux_installer/
+          # Ensure execute permissions
+          chmod +x dist/linux_installer/*.sh dist/linux_installer/EasyBioVibe-IMS
+          # Create the tar.gz file
+          cd dist/linux_installer
+          tar -czvf "../EasyBio.Vibe-${{ env.APP_VERSION }}-linux-installer.tar.gz" *
+          cd ../..
+
+      - name: Set Upload File Path (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: echo "UPLOAD_FILE=dist/EasyBio.Vibe-${{ env.APP_VERSION }}-windows.exe" >> $GITHUB_ENV
+
+      - name: Set Upload File Path (macOS)
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: echo "UPLOAD_FILE=dist/EasyBio.Vibe-${{ env.APP_VERSION }}-macos" >> $GITHUB_ENV
+
+      - name: Set Upload File Path (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: echo "UPLOAD_FILE=dist/EasyBio.Vibe-${{ env.APP_VERSION }}-linux-installer.tar.gz" >> $GITHUB_ENV
+
       - name: Upload Build to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/EasyBio.Vibe-${{ env.APP_VERSION }}-${{ matrix.name }}${{ matrix.ext }}
+          files: ${{ env.UPLOAD_FILE }}
           tag_name: ${{ env.APP_VERSION }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
