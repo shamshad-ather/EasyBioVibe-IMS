@@ -3,13 +3,16 @@ name: Build and Release EasyBio.Vibe
 on:
   push:
     tags:
-      - 'v*' # Triggers the release when a version tag (e.g., v2.0.0) is pushed
-  workflow_dispatch: # Allows manual triggering from the Actions tab
+      - 'v*'
+  workflow_dispatch:
 
 jobs:
   compile:
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write  # Crucial for allowing the bot to upload Release files
     strategy:
+      fail-fast: false # Prevents one OS failure from canceling the successful ones
       matrix:
         include:
           - os: ubuntu-latest
