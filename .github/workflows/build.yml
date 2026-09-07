@@ -1,142 +1,74 @@
-name: Build EasyBioVibe-IMS
+name: Build and Release EasyBio.Vibe
 
 on:
   push:
-    tags: ["v*"]
-  workflow_dispatch: {}
-
-permissions:
-  contents: write
+    tags:
+      - 'v*' # Triggers the release when a version tag (e.g., v2.0.0) is pushed
+  workflow_dispatch: # Allows manual triggering from the Actions tab
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+  compile:
     runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+            separator: ":"
+            ext: ""
+            icon: "assets/icon.png"
+          - os: windows-latest
+            name: windows
+            separator: ";"
+            ext: ".exe"
+            icon: "assets/icon.ico"
+          - os: macos-latest
+            name: macos
+            separator: ":"
+            ext: ""
+            icon: "assets/icon.icns"
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: '3.11'
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Generate icon assets
-        run: python assets/make_icon.py
-
-      # ---------------- Read Version ----------------
-      - name: Read Version from VERSION.md
+      - name: Install Dependencies
         run: |
-          VERSION=$(cat VERSION.md | xargs)
-          # Strip 'v' if it exists to standardize the environment variable
-          if [[ $VERSION == v* ]]; then
-            CLEAN_VERSION="${VERSION:1}"
-          else
-            CLEAN_VERSION="$VERSION"
-          fi
-          echo "APP_VERSION=$CLEAN_VERSION" >> $GITHUB_ENV
+          python -m pip install --upgrade pip
+          pip install Flask flask-bcrypt pyinstaller openpyxl
+
+      - name: Extract Version from VERSION.md
+        id: extract_version
         shell: bash
-
-      # ---------------- Windows ----------------
-      - name: Build exe (Windows)
-        if: matrix.os == 'windows-latest'
-        run: >
-          pyinstaller --onefile --windowed --name EasyBioVibe-IMS
-          --icon assets/icon.ico
-          --add-data "templates;templates"
-          --add-data "assets;assets"
-          --add-data "static;static"
-          --add-data "VERSION.md;."
-          --hidden-import flask_bcrypt
-          launcher.py
-
-      - name: Build installer (Inno Setup, preinstalled on windows-latest)
-        if: matrix.os == 'windows-latest'
-        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\windows\installer.iss'
-
-      - name: Upload Windows installer
-        if: matrix.os == 'windows-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: EasyBioVibe-IMS-Windows-Installer
-          path: packaging/windows/Output/*.exe
-
-      # ---------------- macOS ----------------
-      - name: Build .app (macOS)
-        if: matrix.os == 'macos-latest'
-        run: >
-          pyinstaller --onefile --windowed --name EasyBioVibe-IMS
-          --icon assets/icon.ico
-          --add-data "templates:templates"
-          --add-data "assets:assets"
-          --add-data "static:static"
-          --add-data "VERSION.md:."
-          --hidden-import flask_bcrypt
-          launcher.py
-
-      - name: Package .app into .dmg
-        if: matrix.os == 'macos-latest'
         run: |
-          mkdir -p dist/dmg
-          cp -R "dist/EasyBioVibe-IMS.app" dist/dmg/
-          ln -s /Applications dist/dmg/Applications
-          hdiutil create -volname "EasyBioVibe-IMS" -srcfolder dist/dmg -ov -format UDZO dist/EasyBioVibe-IMS-Mac-v${{ env.APP_VERSION }}.dmg
+          VERSION=$(cat VERSION.md)
+          echo "APP_VERSION=$VERSION" >> $GITHUB_ENV
 
-      - name: Upload macOS dmg
-        if: matrix.os == 'macos-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: EasyBioVibe-IMS-macOS
-          path: dist/*.dmg
-
-      # ---------------- Linux ----------------
-      - name: Build binary (Linux)
-        if: matrix.os == 'ubuntu-latest'
+      - name: Build Executable with PyInstaller
         run: >
-          pyinstaller --onefile --name EasyBioVibe-IMS
-          --icon assets/icon.ico
-          --add-data "templates:templates"
-          --add-data "assets:assets"
-          --add-data "static:static"
-          --add-data "VERSION.md:."
-          --hidden-import flask_bcrypt
-          launcher.py
+          pyinstaller --noconfirm --onefile --windowed
+          --name "EasyBio.Vibe-${{ env.APP_VERSION }}-${{ matrix.name }}${{ matrix.ext }}"
+          --icon "${{ matrix.icon }}"
+          --add-data "app/templates${{ matrix.separator }}templates"
+          --add-data "app/static${{ matrix.separator }}static"
+          --add-data "VERSION.md${{ matrix.separator }}."
+          --hidden-import "app.routes.auth"
+          --hidden-import "app.routes.system"
+          --hidden-import "app.routes.masters"
+          --hidden-import "app.routes.inventory"
+          --hidden-import "app.routes.transactions"
+          --hidden-import "app.routes.equipment"
+          run.py
 
-      - name: Assemble Linux release folder
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          mkdir -p release/EasyBioVibe-IMS-linux
-          cp dist/EasyBioVibe-IMS release/EasyBioVibe-IMS-linux/
-          cp assets/icon_256.png release/EasyBioVibe-IMS-linux/
-          cp packaging/linux/easybiovibe-ims.desktop release/EasyBioVibe-IMS-linux/
-          cp packaging/linux/install.sh release/EasyBioVibe-IMS-linux/
-          cp packaging/linux/uninstall.sh release/EasyBioVibe-IMS-linux/
-          chmod +x release/EasyBioVibe-IMS-linux/EasyBioVibe-IMS release/EasyBioVibe-IMS-linux/install.sh release/EasyBioVibe-IMS-linux/uninstall.sh
-          tar -czf EasyBioVibe-IMS-Linux-v${{ env.APP_VERSION }}.tar.gz -C release EasyBioVibe-IMS-linux
-
-      - name: Upload Linux tarball
-        if: matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: EasyBioVibe-IMS-Linux
-          path: EasyBioVibe-IMS-Linux-v${{ env.APP_VERSION }}.tar.gz
-
-  release:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-      - name: Publish GitHub Release with all three installers
+      - name: Upload Build to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            artifacts/EasyBioVibe-IMS-Windows-Installer/*.exe
-            artifacts/EasyBioVibe-IMS-macOS/*.dmg
-            artifacts/EasyBioVibe-IMS-Linux/*.tar.gz
+          files: dist/EasyBio.Vibe-${{ env.APP_VERSION }}-${{ matrix.name }}${{ matrix.ext }}
+          tag_name: ${{ env.APP_VERSION }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
