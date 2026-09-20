@@ -103,10 +103,19 @@ jobs:
           tar -czvf "../EasyBio.Vibe-${{ env.APP_VERSION }}-linux-installer.tar.gz" *
           cd ../..
 
+      - name: Package Windows Installer (Inno Setup)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          # Rename the raw standalone exe to match what Inno Setup expects
+          mv "dist/EasyBio.Vibe-${{ env.APP_VERSION }}-windows.exe" "dist/EasyBioVibe-IMS.exe"
+          # Compile the installer (ISCC is pre-installed on GitHub windows-latest runners)
+          iscc packaging/windows/installer.iss
+
       - name: Set Upload File Path (Windows)
         if: matrix.os == 'windows-latest'
         shell: bash
-        run: echo "UPLOAD_FILE=dist/EasyBio.Vibe-${{ env.APP_VERSION }}-windows.exe" >> $GITHUB_ENV
+        run: echo "UPLOAD_FILE=packaging/windows/Output/EasyBioVibe-IMS-Setup-v${{ env.APP_VERSION }}.exe" >> $GITHUB_ENV
 
       - name: Set Upload File Path (macOS)
         if: matrix.os == 'macos-latest'
