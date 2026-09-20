@@ -8,9 +8,11 @@ from app.database import init_db
 
 bcrypt = Bcrypt()
 _CACHE_DIR = os.path.join(Path.home(), '.cache', 'easybiovibe')
+_DOCUMENTS_DIR = os.path.join(_CACHE_DIR, 'documents')
 
 def create_app():
     os.makedirs(_CACHE_DIR, exist_ok=True)
+    os.makedirs(_DOCUMENTS_DIR, exist_ok=True)
     app = Flask(__name__, template_folder=resource_path('templates'), static_folder=resource_path('static'))
     
     # Safely generate and store the Flask session secret key
@@ -28,6 +30,11 @@ def create_app():
     @app.route('/')
     def home():
         return render_template('index.html')
+
+    @app.route('/documents/<path:filename>')
+    def serve_document(filename):
+        from flask import send_from_directory
+        return send_from_directory(_DOCUMENTS_DIR, filename)
 
     # Import Blueprints (Matching your actual folder structure)
     from app.routes.auth import auth_bp

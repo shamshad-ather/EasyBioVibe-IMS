@@ -1,6 +1,9 @@
 import os
+import shutil
+import tempfile
+import sqlite3
 import datetime
-from flask import Blueprint, request, jsonify, session, send_file
+from flask import Blueprint, request, jsonify, session, send_file, after_this_request
 from app.database import get_db, trigger_backup, DB_PATH
 from app.utils import get_app_version, login_required, admin_required
 
@@ -24,7 +27,7 @@ def handle_settings():
     c = conn.cursor()
     if request.method == 'POST':
         data = request.get_json()
-        for key in ['lab_name', 'lab_abbrev', 'system_mode', 'backup_path']:
+        for key in ['lab_name', 'lab_abbrev', 'system_mode', 'backup_path', 'institution_prefix']:
             if key in data: c.execute("INSERT OR REPLACE INTO App_Settings (setting_key, setting_value) VALUES (?, ?)", (key, data[key]))
         conn.commit(); conn.close(); trigger_backup()
         return jsonify({"status": "success"})
@@ -41,9 +44,9 @@ def wizard_data():
     c = conn.cursor()
     c.execute("SELECT id, name AS dept_name, code AS dept_code, status, remarks FROM Departments")
     depts = [dict(r) for r in c.fetchall()]
-    c.execute("SELECT id, name AS fac_name, code AS fac_code, department_id, status FROM Faculty")
+    c.execute("SELECT id, username AS fac_name, username AS fac_code, department, status FROM Users WHERE designation IN ('Faculty', 'HoD')")
     facs = [dict(r) for r in c.fetchall()]
-    c.execute("SELECT id, name AS study_name, code AS study_code, type AS study_type, faculty_id, department_id, description, status FROM Studies")
+    c.execute("SELECT id, name AS study_name, code AS study_code, type AS study_type, pi_user_id AS faculty_id, department_id, description, status FROM Studies")
     studies = [dict(r) for r in c.fetchall()]
     c.execute("SELECT id, username AS user_name, role, department, designation, study_ids, status FROM Users")
     users = [dict(r) for r in c.fetchall()]
@@ -54,17 +57,86 @@ def wizard_data():
 
 @system_bp.route('/api/export_db', methods=['GET'])
 @admin_required
-def export_db(): 
-    return send_file(DB_PATH, as_attachment=True, download_name=f"easybiovibe-backup-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}.db")
+def export_db():
+    timestamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+    temp_dir = tempfile.gettempdir()
+    export_path = os.path.join(temp_dir, f"easybiovibe-backup-{timestamp}.db")
+    try:
+        conn = get_db()
+        bck = sqlite3.connect(export_path)
+        with bck:
+            conn.backup(bck)
+        bck.close()
+        conn.close()
+
+        @after_this_request
+        def cleanup(response):
+            try:
+                if os.path.exists(export_path):
+                    os.remove(export_path)
+            except OSError:
+                pass
+            return response
+
+        return send_file(export_path, as_attachment=True, download_name=f"easybiovibe-backup-{timestamp}.db")
+    except Exception as e:
+        if os.path.exists(export_path):
+            try: os.remove(export_path)
+            except OSError: pass
+        return jsonify({"status": "error", "message": f"Export failed: {str(e)}"}), 500
 
 @system_bp.route('/api/import_db', methods=['POST'])
 @admin_required
 def import_db():
     f = request.files.get('dbfile')
-    if not f or f.read(16)[:15] != b'SQLite format 3': return jsonify({"status": "error", "message": "Invalid database file"}), 400
+    if not f or f.read(16)[:15] != b'SQLite format 3': 
+        return jsonify({"status": "error", "message": "Invalid SQLite database file"}), 400
     f.seek(0)
-    if os.path.exists(DB_PATH): 
-        import shutil
-        shutil.copy2(DB_PATH, DB_PATH + '.before-import')
-    f.save(DB_PATH)
-    return jsonify({"status": "success", "message": "Database imported. Restart the app."})
+    
+    # Save to temporary file first and validate required tables exist
+    temp_import = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
+    f.save(temp_import.name)
+    temp_import.close()
+    
+    try:
+        test_conn = sqlite3.connect(temp_import.name)
+        tc = test_conn.cursor()
+        tc.execute("SELECT COUNT(*) FROM Users")
+        tc.fetchone()
+        test_conn.close()
+    except Exception as e:
+        if os.path.exists(temp_import.name): os.remove(temp_import.name)
+        return jsonify({"status": "error", "message": f"Database file is incompatible or missing required tables: {str(e)}"}), 400
+
+    try:
+        if os.path.exists(DB_PATH): 
+            shutil.copy2(DB_PATH, DB_PATH + '.before-import')
+        # Use sqlite online backup into active DB path to respect file locks safely
+        dest_conn = sqlite3.connect(DB_PATH)
+        src_conn = sqlite3.connect(temp_import.name)
+        with dest_conn:
+            src_conn.backup(dest_conn)
+        src_conn.close()
+        dest_conn.close()
+        if os.path.exists(temp_import.name): os.remove(temp_import.name)
+        return jsonify({"status": "success", "message": "Database imported successfully. Please reload the page."})
+    except Exception as e:
+        if os.path.exists(temp_import.name): os.remove(temp_import.name)
+        return jsonify({"status": "error", "message": f"Import failed: {str(e)}"}), 500
+
+@system_bp.route('/api/pick_folder', methods=['POST'])
+@admin_required
+def pick_folder():
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes('-topmost', True)
+        folder = filedialog.askdirectory(title="Select Backup Directory")
+        root.destroy()
+        if folder:
+            return jsonify({"status": "success", "path": folder})
+        return jsonify({"status": "cancelled"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500

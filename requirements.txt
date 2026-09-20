@@ -3,4 +3,3 @@ Flask-Bcrypt
 openpyxl
 pyinstaller
 Pillow
-pystray

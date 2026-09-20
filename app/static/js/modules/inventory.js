@@ -47,7 +47,7 @@ export function renderInventory(content) {
     const search = (document.getElementById('searchInv')?.value || '').toLowerCase();
     const filterType = document.getElementById('filterInvType')?.value || '';
     let items = DB.inventory;
-    if (search) items = items.filter(i => i.MaterialName.toLowerCase().includes(search) || i.Make.toLowerCase().includes(search) || i.InventoryCode.toLowerCase().includes(search));
+    if (search) items = items.filter(i => (i.MaterialName || '').toLowerCase().includes(search) || (i.Make || '').toLowerCase().includes(search) || (i.InventoryCode || '').toLowerCase().includes(search));
     if (filterType) items = items.filter(i => i.MaterialType === filterType);
 
     content.innerHTML = `
@@ -168,7 +168,7 @@ export function renderBatches(content) {
     const toDate = document.getElementById('batchTo')?.value || '';
     
     let items = DB.batches;
-    if (search) items = items.filter(b => b.BatchCode.toLowerCase().includes(search) || b.LotNumber.toLowerCase().includes(search) || b.PurchaseOrderNo.toLowerCase().includes(search));
+    if (search) items = items.filter(b => (b.BatchCode || '').toLowerCase().includes(search) || (b.LotNumber || '').toLowerCase().includes(search) || (b.PurchaseOrderNo || '').toLowerCase().includes(search));
     if (filterInv) items = items.filter(b => b.InventoryID === filterInv);
     if (filterDept && DB.settings.system_mode !== 'Single') items = items.filter(b => b.DepartmentID === filterDept);
     if (fromDate) items = items.filter(b => b.ExpiryDate >= fromDate);
@@ -288,17 +288,16 @@ window.openGlobalUsageModal = function() {
         <form id="globalUsageForm" onsubmit="saveGlobalUsage(event)">
             <div class="form-grid">
                 <div class="form-group">
-                    <label>Study / Activity <span class="required">*</span></label>
-                    <select class="form-control" name="StudyID" id="usageStudy" required onchange="filterUsersByStudy()">
-                        <option value="">Select Study</option>
-                        ${activeStudies.map(s => `<option value="${s.id}">${escapeHtml(s.StudyName)} (${s.StudyCode})</option>`).join('')}
+                    <label>Used By <span class="required">*</span></label>
+                    <select class="form-control" name="UserID" id="usageUser" required onchange="filterStudiesByUser()">
+                        <option value="">Select User</option>
+                        ${activeUsers.map(u => `<option value="${u.id}" ${u.UserName === DB.settings.currentUser ? 'selected' : ''}>${escapeHtml(u.UserName)}</option>`).join('')}
                     </select>
                 </div>
                 <div class="form-group">
-                    <label>Used By <span class="required">*</span></label>
-                    <select class="form-control" name="UserID" id="usageUser" required>
-                        <option value="">Select User</option>
-                        ${activeUsers.map(u => `<option value="${u.id}">${escapeHtml(u.UserName)}</option>`).join('')}
+                    <label>Study / Activity <span class="required">*</span></label>
+                    <select class="form-control" name="StudyID" id="usageStudy" required>
+                        <option value="">Select Study</option>
                     </select>
                 </div>
                 
@@ -340,6 +339,7 @@ window.openGlobalUsageModal = function() {
             </div>
         </form>
     `, null, `<button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button><button type="button" class="btn btn-primary" onclick="document.getElementById('globalUsageForm').dispatchEvent(new Event('submit', {cancelable: true}))">Save Usage</button>`);
+    setTimeout(() => window.filterStudiesByUser(), 100);
 };
 
 // --- Smart Boolean Search Engine ---
@@ -479,12 +479,17 @@ document.addEventListener('click', function(e) {
     if (batchResults && e.target.id !== 'batchInventorySearch') batchResults.style.display = 'none';
 });
 
-window.filterUsersByStudy = function() {
-    const studyId = document.getElementById('usageStudy').value;
-    const userSelect = document.getElementById('usageUser');
-    let validUsers = DB.users.filter(u => u.Status === 'Active');
-    if (studyId) validUsers = validUsers.filter(u => u.StudyIDs.includes('ALL') || u.StudyIDs.includes(studyId));
-    userSelect.innerHTML = '<option value="">Select User</option>' + validUsers.map(u => `<option value="${u.id}">${escapeHtml(u.UserName)}</option>`).join('');
+window.filterStudiesByUser = function() {
+    const userId = document.getElementById('usageUser').value;
+    const studySelect = document.getElementById('usageStudy');
+    let validStudies = DB.studies.filter(s => s.Status === 'Active');
+    
+    if (userId) {
+        const assignedStudyIds = DB.userStudyAssignments.filter(a => String(a.user_id) === String(userId)).map(a => String(a.study_id));
+        validStudies = validStudies.filter(s => assignedStudyIds.includes(String(s.id)));
+    }
+    
+    studySelect.innerHTML = '<option value="">Select Study</option>' + validStudies.map(s => `<option value="${s.id}">${escapeHtml(s.StudyName)} (${s.StudyCode})</option>`).join('');
 };
 
 window.updateGlobalUsageBatches = function() {

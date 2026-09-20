@@ -1,10 +1,11 @@
+import sqlite3
 import difflib
 from io import BytesIO
 from openpyxl import Workbook, load_workbook
 from openpyxl.worksheet.datavalidation import DataValidation
-from flask import Blueprint, request, jsonify, make_response
+from flask import Blueprint, request, jsonify, make_response, session
 from app.database import get_db, trigger_backup
-from app.utils import login_required, admin_required
+from app.utils import login_required, admin_required, generate_semantic_id
 
 inventory_bp = Blueprint('inventory', __name__)
 
@@ -14,14 +15,18 @@ def handle_inventory():
     conn = get_db()
     c = conn.cursor()
     if request.method == 'POST':
+        if session.get('role') != 'Admin': conn.close(); return jsonify({"status": "error", "message": "Admin privileges required"}), 403
         data = request.get_json()
         try:
             if data.get('id'):
                 c.execute("""UPDATE Inventory_Master SET material_name=?, make=?, model=?, category=?, alert_threshold=?, base_unit=?, pack_qty=? WHERE id=?""",
                           (data['material_name'], data.get('make', ''), data.get('model', ''), data.get('category', 'Other'), float(data.get('alert_threshold', 15)), data.get('base_unit', 'Nos'), float(data.get('pack_qty', 1)), data.get('id')))
             else:
+                c.execute("SELECT MAX(id) FROM Inventory_Master")
+                max_id = c.fetchone()[0] or 0
+                code = data.get('item_code') or generate_semantic_id('INV', max_id + 1, conn)
                 c.execute("""INSERT INTO Inventory_Master (item_code, material_name, make, model, category, alert_threshold, base_unit, pack_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                          (data.get('item_code'), data['material_name'], data.get('make', ''), data.get('model', ''), data.get('category', 'Other'), float(data.get('alert_threshold', 15)), data.get('base_unit', 'Nos'), float(data.get('pack_qty', 1))))
+                          (code, data['material_name'], data.get('make', ''), data.get('model', ''), data.get('category', 'Other'), float(data.get('alert_threshold', 15)), data.get('base_unit', 'Nos'), float(data.get('pack_qty', 1))))
             conn.commit(); status = "success"
         except sqlite3.IntegrityError: status = "error"
         conn.close()
@@ -71,7 +76,8 @@ def bulk_inventory():
         if row.get('MergeWithID'): merged_count += 1; continue
         max_id += 1
         try:
-            c.execute("""INSERT INTO Inventory_Master (item_code, material_name, make, model, category, alert_threshold, base_unit, pack_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", (f"INV{str(max_id).zfill(6)}", row['MaterialName'], row.get('Make', ''), row.get('Model', ''), row.get('MaterialType', 'Other'), float(row.get('AlertThreshold', 15)), row.get('Unit', 'Nos'), float(row.get('PackQty', 1))))
+            code = generate_semantic_id('INV', max_id, conn)
+            c.execute("""INSERT INTO Inventory_Master (item_code, material_name, make, model, category, alert_threshold, base_unit, pack_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", (code, row['MaterialName'], row.get('Make', ''), row.get('Model', ''), row.get('MaterialType', 'Other'), float(row.get('AlertThreshold', 15)), row.get('Unit', 'Nos'), float(row.get('PackQty', 1))))
             added_count += 1
         except sqlite3.IntegrityError: pass
     conn.commit(); conn.close(); trigger_backup()

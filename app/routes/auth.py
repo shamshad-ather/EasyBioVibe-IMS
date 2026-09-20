@@ -1,3 +1,4 @@
+import sqlite3
 from flask import Blueprint, request, jsonify, session
 from app import bcrypt
 from app.database import get_db, trigger_backup
@@ -20,22 +21,15 @@ def setup_system():
         c.execute("INSERT OR REPLACE INTO App_Settings (setting_key, setting_value) VALUES ('lab_abbrev', ?)", (data.get('lab_abbrev', 'LAB'),))
         c.execute("INSERT OR REPLACE INTO App_Settings (setting_key, setting_value) VALUES ('system_mode', ?)", (sys_mode,))
         c.execute("INSERT OR REPLACE INTO App_Settings (setting_key, setting_value) VALUES ('backup_path', ?)", (data.get('backup_path', ''),))
+        c.execute("INSERT OR REPLACE INTO App_Settings (setting_key, setting_value) VALUES ('institution_prefix', ?)", (data.get('institution_prefix', ''),))
         
         dept_name = "Main Lab" if sys_mode == 'Single' else data.get('department_name', 'Administration').strip()
         dept_code = gen_code(dept_name, 'DEP')
         c.execute("INSERT INTO Departments (name, code, status, remarks) VALUES (?, ?, 'Active', ?)", (dept_name, dept_code, 'Auto-created'))
         dept_id = c.lastrowid
-        faculty_id = None
-        
-        if data.get('is_faculty'):
-            c.execute("SELECT MAX(id) FROM Faculty")
-            max_id = c.fetchone()[0] or 0
-            c.execute("INSERT INTO Faculty (name, code, department_id, status) VALUES (?, ?, ?, 'Active')", (data.get('username'), f"FAC{str(max_id + 1).zfill(4)}", dept_id))
-            faculty_id = c.lastrowid
-            
         hashed_pw = bcrypt.generate_password_hash(data.get('password')).decode('utf-8')
-        c.execute("""INSERT INTO Users (username, password, role, department, designation, study_ids, status, faculty_id, qa_configured) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)""", 
-                  (data.get('username'), hashed_pw, 'Admin', dept_name, data.get('designation', 'HoD'), 'ALL', 'Active', faculty_id))
+        c.execute("""INSERT INTO Users (username, password, role, department, designation, status, qa_configured) VALUES (?, ?, ?, ?, ?, ?, 0)""", 
+                  (data.get('username'), hashed_pw, 'Admin', dept_name, data.get('designation', 'HoD'), 'Active'))
         conn.commit()
         session['user'] = data.get('username')
         session['role'] = 'Admin'

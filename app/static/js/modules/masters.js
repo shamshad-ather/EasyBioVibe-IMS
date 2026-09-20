@@ -190,15 +190,27 @@ window.saveFaculty = async function(e) {
     if (pwd || cpwd) { if (pwd !== cpwd) { showToast('Passwords do not match!', 'error'); return; } }
 
     const item = data.id ? getLookup(data.id, 'faculty') : null;
-    const payload = { id: data.id ? parseInt(data.id) : null, name: data.FacultyName, department_id: parseInt(data.DepartmentID), status: data.Status, password: pwd };
+    const dept = getLookup(data.DepartmentID, 'departments');
+    const deptName = dept ? dept.DepartmentName : '';
+
+    const payload = { 
+        id: data.id ? parseInt(data.id) : null, 
+        name: data.FacultyName, 
+        department: deptName, 
+        designation: 'Faculty',
+        role: 'Manager',
+        status: data.Status, 
+        password: pwd,
+        study_ids: 'ALL'
+    };
 
     try {
-        const res = await apiCall('/api/faculty', payload, 'POST');
+        const res = await apiCall('/api/users', payload, 'POST');
         if (res.status === 'success') {
             const code = item ? item.FacultyCode : payload.name;
-            await window.logChangedFields('Faculty', code, item, { FacultyName: payload.name, DepartmentID: String(payload.department_id), Status: payload.status });
-            await loadRealData(); showToast(res.message || 'Faculty saved successfully!', res.message && res.message.includes('already exists') ? 'error' : 'success'); closeModal(); window.renderCurrentPage();
-        } else { showToast('Error saving faculty', 'error'); }
+            await window.logChangedFields('Users', code, item, { UserName: payload.name, Department: payload.department, Status: payload.status });
+            await loadRealData(); showToast(res.message || 'Faculty saved successfully!', 'success'); closeModal(); window.renderCurrentPage();
+        } else { showToast(res.message || 'Error saving faculty', 'error'); }
     } catch (err) { showToast('Connection error.', 'error'); }
 };
 
@@ -239,7 +251,7 @@ window.openStudyModal = function(id, preselectFacId) {
             <div class="form-group"><label>Study Code</label><input type="text" class="form-control" value="${item?item.StudyCode:generateId('STD','studies')}" disabled></div>
             <div class="form-group"><label>Study Name <span class="required">*</span></label><input type="text" class="form-control" name="StudyName" value="${item?escapeHtml(item.StudyName):''}" required></div>
             <div class="form-group"><label>Study Type <span class="required">*</span></label><select class="form-control" name="StudyType" required>${CONSTANTS.STUDY_TYPES.map(t=>`<option value="${t}" ${item&&item.StudyType===t?'selected':''}>${t}</option>`).join('')}</select></div>
-            <div class="form-group"><label>Faculty <span class="required">*</span></label><select class="form-control" name="FacultyID" required onchange="updateStudyDept()"><option value="">Select Faculty</option>${DB.faculty.filter(f=>f.Status==='Active').map(f=>`<option value="${f.id}" ${String(targetFac)===String(f.id)?'selected':''}>${escapeHtml(f.FacultyName)}</option>`).join('')}</select></div>
+            <div class="form-group"><label>Faculty/PI <span class="required">*</span></label><select class="form-control" name="pi_user_id" required onchange="updateStudyDept()"><option value="">Select Faculty</option>${DB.faculty.filter(f=>f.Status==='Active').map(f=>`<option value="${f.id}" ${String(targetFac)===String(f.id)?'selected':''}>${escapeHtml(f.FacultyName)}</option>`).join('')}</select></div>
             <div class="form-group" style="${DB.settings.system_mode === 'Single' ? 'display:none;' : ''}"><label>Department</label><input type="text" class="form-control" id="studyDeptDisplay" value="${item?(getLookup(item.DepartmentID,'departments')?.DepartmentName||''):''}" disabled><input type="hidden" name="DepartmentID" id="studyDeptId" value="${item?item.DepartmentID:''}"></div>
             <div class="form-group"><label>Description</label><textarea class="form-control" name="Description" rows="2">${item?escapeHtml(item.Description):''}</textarea></div>
             <div class="form-group"><label>Status</label><select class="form-control" name="Status"><option value="Active" ${item&&item.Status==='Active'?'selected':''}>Active</option><option value="Inactive" ${item&&item.Status==='Inactive'?'selected':''}>Inactive</option></select></div>
@@ -259,13 +271,13 @@ window.saveStudy = async function(e) {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(document.getElementById('studyForm')));
     const item = data.id ? getLookup(data.id, 'studies') : null;
-    const payload = { id: data.id ? parseInt(data.id) : null, name: data.StudyName, type: data.StudyType, faculty_id: parseInt(data.FacultyID), department_id: parseInt(data.DepartmentID), description: data.Description || '', status: data.Status };
+    const payload = { id: data.id ? parseInt(data.id) : null, name: data.StudyName, type: data.StudyType, pi_user_id: parseInt(data.pi_user_id), department_id: parseInt(data.DepartmentID) || null, description: data.Description, status: data.Status };
 
     try {
         const res = await apiCall('/api/studies', payload, 'POST');
         if (res.status === 'success') {
             const code = item ? item.StudyCode : payload.name;
-            await window.logChangedFields('Study', code, item, { StudyName: payload.name, StudyType: payload.type, FacultyID: String(payload.faculty_id), DepartmentID: String(payload.department_id), Description: payload.description, Status: payload.status });
+            await window.logChangedFields('Studies', code, item, { StudyName: payload.name, StudyType: payload.type, FacultyID: String(payload.pi_user_id), DepartmentID: String(payload.department_id || ''), Description: payload.description, Status: payload.status });
             await loadRealData(); showToast('Study saved successfully!', 'success'); closeModal(); window.renderCurrentPage();
         } else { showToast('Error saving study', 'error'); }
     } catch (err) { showToast('Connection error.', 'error'); }
@@ -442,7 +454,8 @@ export function renderDocuments(content) {
                         </div>
                     </div>
                     <div class="table-actions">
-                        ${d.LinkUrl ? `<a class="btn btn-sm btn-secondary" href="${escapeHtml(d.LinkUrl)}" target="_blank">Open Link</a>` : ''}
+                        ${d.FilePath ? `<a class="btn btn-sm btn-primary" href="/documents/${d.FilePath}" target="_blank">View File</a>` : ''}
+                        ${d.LinkUrl && !d.FilePath ? `<a class="btn btn-sm btn-secondary" href="${escapeHtml(d.LinkUrl)}" target="_blank">Open Link</a>` : ''}
                         ${DB.settings.currentRole === 'Admin' ? `<button class="btn btn-sm btn-secondary" onclick="openDocumentModal('${d.id}')">Edit</button>` : ''}
                     </div>
                 </div>`;
@@ -465,7 +478,12 @@ window.openDocumentModal = function(id) {
                 <div class="form-group"><label>Valid To / Expiry (Optional)</label><input type="date" class="form-control" name="ValidTo" value="${item?item.ValidTo:''}"></div>
                 <div class="form-group"><label>Linked Material</label><select class="form-control" name="LinkedInventoryID"><option value="">None</option>${DB.inventory.filter(i=>i.Status==='Active').map(i=>`<option value="${i.id}" ${item&&item.LinkedInventoryID===i.id?'selected':''}>${escapeHtml(i.MaterialName)}</option>`).join('')}</select></div>
                 <div class="form-group"><label>Linked Equipment</label><select class="form-control" name="LinkedEquipID"><option value="">None</option>${DB.equipment.map(e=>`<option value="${e.id}" ${item&&item.LinkedEquipID===e.id?'selected':''}>${escapeHtml(e.name)}</option>`).join('')}</select></div>
-                <div class="form-group full-width"><label>Link (Drive / intranet URL to the actual file)</label><input type="url" class="form-control" name="LinkUrl" placeholder="https://..." value="${item?escapeHtml(item.LinkUrl||''):''}"></div>
+                <div class="form-group full-width">
+                    <label>File Upload (Optional)</label>
+                    <input type="file" class="form-control" name="DocumentFile" id="documentFile">
+                    ${item && item.FilePath ? `<div style="font-size:12px;margin-top:4px;">Current file: <a href="/documents/${item.FilePath}" target="_blank">${item.FilePath}</a></div>` : ''}
+                </div>
+                <div class="form-group full-width"><label>Link (Drive / intranet URL - ignored if file is uploaded)</label><input type="url" class="form-control" name="LinkUrl" placeholder="https://..." value="${item?escapeHtml(item.LinkUrl||''):''}"></div>
                 <div class="form-group full-width"><label>Remarks</label><textarea class="form-control" name="Remarks" rows="2">${item?escapeHtml(item.Remarks):''}</textarea></div>
             </div>
             ${item?`<input type="hidden" name="id" value="${item.id}">`:''}
@@ -477,7 +495,22 @@ window.saveDocument = async function(e) {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(document.getElementById('documentForm')));
     const item = data.id ? getLookup(data.id, 'documents') : null;
-    const payload = { id: data.id ? parseInt(data.id) : null, document_code: data.DocumentCode || generateId('DOC', 'documents'), title: data.Title, document_type: data.DocumentType, version: data.Version || 'v1.0', linked_inventory_id: data.LinkedInventoryID || null, linked_equip_id: data.LinkedEquipID || null, valid_from: data.ValidFrom || null, valid_to: data.ValidTo || null, remarks: data.Remarks || '', link_url: data.LinkUrl || '' };
+    let filePath = item ? (item.FilePath || '') : '';
+    
+    const fileInput = document.getElementById('documentFile');
+    if (fileInput && fileInput.files.length > 0) {
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+        formData.append('document_code', item ? item.DocumentCode : (data.DocumentCode || 'DOC'));
+        try {
+            const uploadRes = await fetch('/api/documents/upload', { method: 'POST', body: formData });
+            const uploadJson = await uploadRes.json();
+            if (uploadJson.status === 'success') filePath = uploadJson.file_path;
+            else { showToast('Upload failed: ' + uploadJson.message, 'error'); return; }
+        } catch(err) { showToast('File upload error', 'error'); return; }
+    }
+
+    const payload = { id: data.id ? parseInt(data.id) : null, document_code: data.DocumentCode || generateId('DOC', 'documents'), title: data.Title, document_type: data.DocumentType, version: data.Version || 'v1.0', linked_inventory_id: data.LinkedInventoryID || null, linked_equip_id: data.LinkedEquipID || null, valid_from: data.ValidFrom || null, valid_to: data.ValidTo || null, remarks: data.Remarks || '', link_url: data.LinkUrl || '', file_path: filePath };
     try {
         const res = await apiCall('/api/documents', payload, 'POST');
         if (res.status === 'success') { const code = item ? item.DocumentCode : payload.document_code; if (!item) { await window.logHistory('Document', code, '(created)', '', payload.title); } else { await window.logChangedFields('Document', code, item, { Title: payload.title, DocumentType: payload.document_type, Version: payload.version, LinkUrl: payload.link_url, ValidTo: payload.valid_to }); } await loadRealData(); showToast('Saved!', 'success'); closeModal(); window.renderCurrentPage(); }

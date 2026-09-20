@@ -20,11 +20,11 @@ def ping():
     return jsonify({"status": "ok"})
 
 def monitor_heartbeat():
-    time.sleep(20)
+    time.sleep(30)
     while True:
-        time.sleep(5)
-        if time.time() - LAST_PING > 30:
-            print("Window closed. Shutting down server...")
+        time.sleep(15)
+        if time.time() - LAST_PING > 900:  # 15 minutes tolerance for background tab throttling
+            print("Session idle or window closed (15 min). Shutting down server...")
             trigger_backup()
             os.kill(os.getpid(), signal.SIGTERM)
 

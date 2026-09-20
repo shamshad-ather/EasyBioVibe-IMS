@@ -32,9 +32,9 @@ window.handleSetup = async function(e) {
         backup_path: document.getElementById('setupBackupPath').value,
         lab_name: document.getElementById('setupLabName').value,
         lab_abbrev: document.getElementById('setupLabAbbrev').value,
+        institution_prefix: document.getElementById('setupInstPrefix').value,
         username: document.getElementById('setupUsername').value,
         password: pw,
-        is_faculty: document.getElementById('setupIsFaculty').checked,
         department_name: document.getElementById('setupDeptName').value,
         designation: document.getElementById('setupDesignation').value
     };

@@ -41,9 +41,10 @@ def gen_code(name, fallback='GEN'):
 def get_unit_multiplier(unit):
     mass_units = {'kg': 1000.0, 'g': 1.0, 'mg': 0.001, 'ug': 0.000001}
     vol_units = {'L': 1.0, 'mL': 0.001, 'uL': 0.000001}
-    if unit in mass_units: return mass_units[unit], 'mass'
-    elif unit in vol_units: return vol_units[unit], 'vol'
-    return 1.0, 'discrete'
+    u = (unit or '').strip()
+    if u in mass_units: return mass_units[u], 'mass'
+    elif u in vol_units: return vol_units[u], 'vol'
+    return 1.0, f'discrete_{u}'
 
 def normalize_answer(ans):
     if not ans: return ""
@@ -66,3 +67,20 @@ def admin_required(fn):
             return jsonify({"status": "error", "message": "Admin privileges required"}), 403
         return fn(*args, **kwargs)
     return wrapper
+
+def generate_semantic_id(entity_prefix, sequential_id, conn):
+    c = conn.cursor()
+    c.execute("SELECT setting_key, setting_value FROM App_Settings WHERE setting_key IN ('institution_prefix', 'lab_abbrev')")
+    settings = {row['setting_key']: row['setting_value'] for row in c.fetchall()}
+    
+    inst = settings.get('institution_prefix', '')
+    lab = settings.get('lab_abbrev', '')
+    
+    parts = []
+    if inst: parts.append(inst)
+    if lab: parts.append(lab)
+    
+    number_str = str(sequential_id).zfill(3)
+    parts.append(f"{entity_prefix}{number_str}")
+    
+    return "-".join(parts)

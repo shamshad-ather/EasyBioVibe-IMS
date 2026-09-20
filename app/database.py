@@ -17,8 +17,10 @@ def get_secret_key():
         return f.read().strip()
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute("PRAGMA journal_mode = WAL;")
     return conn
 
 def trigger_backup():
@@ -51,6 +53,8 @@ def init_db():
         try: c.execute(f"ALTER TABLE Users ADD COLUMN {col} {col_type}")
         except sqlite3.OperationalError: pass
     
+    c.execute('''CREATE TABLE IF NOT EXISTS User_Study_Assignments (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, study_id INTEGER NOT NULL, assigned_date TEXT, UNIQUE(user_id, study_id), FOREIGN KEY(user_id) REFERENCES Users(id), FOREIGN KEY(study_id) REFERENCES Studies(id))''')
+
     c.execute('''CREATE TABLE IF NOT EXISTS Inventory_Master (id INTEGER PRIMARY KEY AUTOINCREMENT, item_code TEXT UNIQUE, material_name TEXT, make TEXT, model TEXT, category TEXT, pack_size REAL, base_unit TEXT, vendor_id INTEGER)''')
     for col, col_type in [("model", "TEXT"), ("alert_threshold", "REAL DEFAULT 15"), ("pack_qty", "REAL DEFAULT 1")]:
         try: c.execute(f"ALTER TABLE Inventory_Master ADD COLUMN {col} {col_type}")
@@ -69,10 +73,13 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS Departments (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, code TEXT, status TEXT DEFAULT 'Active', remarks TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS Faculty (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, code TEXT, department_id INTEGER, status TEXT DEFAULT 'Active')''')
     c.execute('''CREATE TABLE IF NOT EXISTS Studies (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, code TEXT, type TEXT, faculty_id INTEGER, department_id INTEGER, description TEXT, status TEXT DEFAULT 'Active')''')
+    try: c.execute("ALTER TABLE Studies ADD COLUMN pi_user_id INTEGER")
+    except sqlite3.OperationalError: pass
+    
     c.execute('''CREATE TABLE IF NOT EXISTS Vendors (id INTEGER PRIMARY KEY AUTOINCREMENT, vendor_code TEXT, vendor_name TEXT, contact_number TEXT, remarks TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS Documents (id INTEGER PRIMARY KEY AUTOINCREMENT, document_code TEXT, title TEXT, document_type TEXT, version TEXT, linked_inventory_id INTEGER, remarks TEXT)''')
     
-    for col, col_type in [("link_url", "TEXT"), ("linked_equip_id", "INTEGER"), ("valid_from", "TEXT"), ("valid_to", "TEXT")]:
+    for col, col_type in [("link_url", "TEXT"), ("linked_equip_id", "INTEGER"), ("valid_from", "TEXT"), ("valid_to", "TEXT"), ("file_path", "TEXT")]:
         try: c.execute(f"ALTER TABLE Documents ADD COLUMN {col} {col_type}")
         except sqlite3.OperationalError: pass
 
@@ -86,5 +93,30 @@ def init_db():
 
     c.execute('''CREATE TABLE IF NOT EXISTS Equipment_Events (id INTEGER PRIMARY KEY AUTOINCREMENT, equip_id INTEGER, event_type TEXT, event_date TEXT, performed_by TEXT, pass_fail_status TEXT, remarks TEXT, FOREIGN KEY(equip_id) REFERENCES Equipment_Master(id))''')
 
+    # Data Migration: Flatten Faculty -> Users
+    c.execute("SELECT id, name, department_id FROM Faculty")
+    faculties = c.fetchall()
+    for fac in faculties:
+        c.execute("SELECT id FROM Users WHERE faculty_id=?", (fac['id'],))
+        u = c.fetchone()
+        if not u:
+            dept_name = ""
+            if fac['department_id']:
+                c.execute("SELECT name FROM Departments WHERE id=?", (fac['department_id'],))
+                d = c.fetchone()
+                if d: dept_name = d['name']
+            
+            c.execute("""INSERT INTO Users (username, password, role, department, designation, study_ids, status, faculty_id) 
+                         VALUES (?, ?, 'Manager', ?, 'Faculty', 'ALL', 'Active', ?)""",
+                      (fac['name'], "", dept_name, fac['id']))
+            user_id = c.lastrowid
+        else:
+            user_id = u['id']
+            # Make sure designation is Faculty
+            c.execute("UPDATE Users SET designation='Faculty' WHERE id=?", (user_id,))
+        
+        # Migrate Studies.pi_user_id
+        c.execute("UPDATE Studies SET pi_user_id=? WHERE faculty_id=?", (user_id, fac['id']))
+        
     conn.commit()
     conn.close()
