@@ -23,7 +23,11 @@ export function renderEquipment(content) {
                 <option value="">All Departments</option>
                 ${DB.departments.filter(d => d.Status === 'Active').map(d => `<option value="${d.id}" ${filterDept === d.id ? 'selected' : ''}>${escapeHtml(d.DepartmentName)}</option>`).join('')}
             </select>` : ''}
-            ${DB.settings.currentRole === 'Admin' ? `<button class="btn btn-primary" onclick="openEquipmentModal()"><svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg> Add Asset</button>` : ''}
+            ${DB.settings.currentRole === 'Admin' ? `
+            <input type="file" id="bulkUploadEquip" accept=".xlsx" style="display:none" onchange="handleEquipBulkUpload(event)">
+            <button class="btn btn-secondary" onclick="window.location.href='/api/equipment/template'">Download Template</button>
+            <button class="btn btn-secondary" onclick="document.getElementById('bulkUploadEquip').click()">Upload Excel</button>
+            <button class="btn btn-primary" onclick="openEquipmentModal()"><svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg> Add Asset</button>` : ''}
         </div>
         <div class="card"><div class="table-container"><table class="data-table">
             <thead><tr><th>SN</th><th>Asset Code & Name</th><th>Make / Model</th>${DB.settings.system_mode !== 'Single' ? '<th>Department</th>' : ''}<th>Compliance Docs</th><th>Status</th><th>Actions</th></tr></thead>
@@ -194,4 +198,35 @@ window.saveEvent = async function (e) {
     if (res.status === 'success') {
         await loadRealData(); showToast('Event logged!', 'success'); window.showEquipmentHistory(data.equip_id); window.renderCurrentPage();
     } else { showToast(res.message || 'Error saving event', 'error'); }
+};
+
+window.handleEquipBulkUpload = async function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const formData = new FormData(); formData.append('file', file);
+    showToast('Parsing file...', 'info');
+    try {
+        const res = await fetch('/api/equipment/upload', { method: 'POST', body: formData });
+        const result = await res.json();
+        if (result.status === 'success') window.openEquipBulkReviewModal(result.data); else showToast(result.message, 'error');
+    } catch (err) { showToast('Connection error.', 'error'); }
+    e.target.value = '';
+};
+
+window.openEquipBulkReviewModal = function(rows) {
+    window._bulkEquipData = rows; 
+    openModal('Review Equipment Upload', `
+        <div class="table-container" style="max-height:400px; overflow-y:auto; border:1px solid var(--line); border-radius:var(--radius-md);">
+            <table class="data-table"><thead style="position:sticky; top:0; z-index:1;"><tr><th>Name & Make</th><th>Model & SN</th><th>Location</th></tr></thead>
+            <tbody>${rows.map((r, idx) => {
+                return `<tr><td><strong>${escapeHtml(r.Name)}</strong><br><span style="font-size:11px; color:var(--gray-500);">${escapeHtml(r.Make)}</span></td><td>${escapeHtml(r.Model)}<br><span style="font-size:11px; color:var(--gray-500);">${escapeHtml(r.SerialNumber)}</span></td><td>${escapeHtml(r.LocationRoom)}</td></tr>`;
+            }).join('')}</tbody></table>
+        </div>
+    `, 'modal-xl', `<button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button><button type="button" class="btn btn-primary" onclick="commitEquipBulkUpload()">Confirm & Save</button>`);
+};
+
+window.commitEquipBulkUpload = async function() {
+    const rows = window._bulkEquipData;
+    const res = await apiCall('/api/equipment/bulk', { rows: rows }, 'POST');
+    if (res.status === 'success') { await loadRealData(); showToast(res.message, 'success'); closeModal(); window.renderCurrentPage(); } else showToast(res.message, 'error');
 };

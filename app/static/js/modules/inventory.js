@@ -182,7 +182,11 @@ export function renderBatches(content) {
             ${DB.settings.system_mode !== 'Single' ? `<select class="form-control" id="filterBatchDept" onchange="renderCurrentPage()"><option value="">All Departments</option>${DB.departments.filter(d=>d.Status==='Active').map(d=>`<option value="${d.id}" ${filterDept===d.id?'selected':''}>${escapeHtml(d.DepartmentName)}</option>`).join('')}</select>` : ''}
             <div style="display:flex;align-items:center;gap:6px;"><span style="font-size:12px;color:var(--gray-500);font-weight:600;">FROM</span><input type="date" class="form-control" id="batchFrom" value="${fromDate}" onchange="renderCurrentPage()"></div>
             <div style="display:flex;align-items:center;gap:6px;"><span style="font-size:12px;color:var(--gray-500);font-weight:600;">TO</span><input type="date" class="form-control" id="batchTo" value="${toDate}" onchange="renderCurrentPage()"></div>
-            <button class="btn btn-primary" onclick="openBatchModal()"><svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg> Add Batch</button>
+            ${DB.settings.currentRole === 'Admin' ? `
+            <input type="file" id="bulkUploadBatch" accept=".xlsx" style="display:none" onchange="handleBatchBulkUpload(event)">
+            <button class="btn btn-secondary" onclick="window.location.href='/api/batches/template'">Download Template</button>
+            <button class="btn btn-secondary" onclick="document.getElementById('bulkUploadBatch').click()">Upload Excel</button>
+            <button class="btn btn-primary" onclick="openBatchModal()"><svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg> Add Batch</button>` : `<button class="btn btn-primary" onclick="openBatchModal()"><svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg> Add Batch</button>`}
         </div>
         <div class="card"><div class="table-container"><table class="data-table">
             <thead><tr><th>SN</th><th>Material</th>${DB.settings.system_mode !== 'Single'?'<th>Department</th>':''}<th>Study</th><th>PO No</th><th>Lot</th><th>Expiry</th><th>Received</th><th>Current</th><th>Status</th><th>Actions</th></tr></thead>
@@ -618,4 +622,36 @@ window.showMaterialHistory = function(inventoryId) {
             </div>
         </div>
     `, 'modal-xl');
+};
+
+window.handleBatchBulkUpload = async function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const formData = new FormData(); formData.append('file', file);
+    showToast('Parsing file...', 'info');
+    try {
+        const res = await fetch('/api/batches/upload', { method: 'POST', body: formData });
+        const result = await res.json();
+        if (result.status === 'success') window.openBatchBulkReviewModal(result.data); else showToast(result.message, 'error');
+    } catch (err) { showToast('Connection error.', 'error'); }
+    e.target.value = '';
+};
+
+window.openBatchBulkReviewModal = function(rows) {
+    window._bulkBatchData = rows; 
+    openModal('Review Batch Upload', `
+        <div class="table-container" style="max-height:400px; overflow-y:auto; border:1px solid var(--line); border-radius:var(--radius-md);">
+            <table class="data-table"><thead style="position:sticky; top:0; z-index:1;"><tr><th>Material</th><th>Lot & Expiry</th><th>Packs Uploaded</th><th>Total Quantity</th></tr></thead>
+            <tbody>${rows.map((r, idx) => {
+                const matchClass = r.MatchedInventoryID ? 'success' : 'danger';
+                return `<tr style="${!r.MatchedInventoryID ? 'background:var(--danger-light);' : ''}"><td><strong>${escapeHtml(r.InventoryCode)}</strong><br><span style="font-size:11px; color:var(--${matchClass});">${escapeHtml(r.MatchedMaterialName)}</span></td><td>${escapeHtml(r.LotNumber)}<br><span style="font-size:11px; color:var(--gray-500);">${escapeHtml(r.ExpiryDate)}</span></td><td>${r.NumberOfPacks} Packs</td><td><strong>${r.QuantityReceived} ${escapeHtml(r.Unit)}</strong></td></tr>`;
+            }).join('')}</tbody></table>
+        </div>
+    `, 'modal-xl', `<button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button><button type="button" class="btn btn-primary" onclick="commitBatchBulkUpload()">Confirm & Save</button>`);
+};
+
+window.commitBatchBulkUpload = async function() {
+    const rows = window._bulkBatchData;
+    const res = await apiCall('/api/batches/bulk', { rows: rows }, 'POST');
+    if (res.status === 'success') { await loadRealData(); showToast(res.message, 'success'); closeModal(); window.renderCurrentPage(); } else showToast(res.message, 'error');
 };

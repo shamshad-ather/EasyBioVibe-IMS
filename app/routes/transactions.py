@@ -1,7 +1,10 @@
 import datetime
-from flask import Blueprint, request, jsonify, session
+from io import BytesIO
+from openpyxl import Workbook, load_workbook
+from openpyxl.worksheet.datavalidation import DataValidation
+from flask import Blueprint, request, jsonify, session, make_response
 from app.database import get_db, trigger_backup
-from app.utils import login_required, get_unit_multiplier, generate_semantic_id
+from app.utils import login_required, admin_required, get_unit_multiplier, generate_semantic_id
 
 transactions_bp = Blueprint('transactions', __name__)
 
@@ -136,3 +139,147 @@ def handle_history():
     rows = [dict(r) for r in c.fetchall()]
     conn.close()
     return jsonify(rows)
+
+@transactions_bp.route('/api/batches/template', methods=['GET'])
+@admin_required
+def batches_template():
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT item_code, material_name FROM Inventory_Master WHERE status='Active'")
+    materials = c.fetchall()
+    c.execute("SELECT id, name FROM Departments WHERE status='Active'")
+    departments = c.fetchall()
+    c.execute("SELECT id, name FROM Studies WHERE status='Active'")
+    studies = c.fetchall()
+    c.execute("SELECT id, vendor_name FROM Vendors")
+    vendors = c.fetchall()
+    conn.close()
+    
+    material_list = [f"{r['material_name'].replace(',', '')}_{r['item_code']}" for r in materials]
+    dept_list = [f"{r['name'].replace(',', '')}_{r['id']}" for r in departments]
+    study_list = [f"{r['name'].replace(',', '')}_{r['id']}" for r in studies]
+    vendor_list = [f"{r['vendor_name'].replace(',', '')}_{r['id']}" for r in vendors]
+    
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Batches Upload"
+    
+    def add_dropdown(data_list, title, col_letter):
+        if not data_list: return
+        ws_hidden = wb.create_sheet(title=title)
+        ws_hidden.sheet_state = 'hidden'
+        for idx, val in enumerate(data_list, start=1):
+            ws_hidden.cell(row=idx, column=1, value=val)
+        dv = DataValidation(type="list", formula1=f"'{title}'!$A$1:$A${len(data_list)}", allow_blank=True)
+        ws.add_data_validation(dv)
+        dv.add(f'{col_letter}2:{col_letter}1000')
+
+    add_dropdown(material_list, "Material_List", "A")
+    add_dropdown(dept_list, "Dept_List", "G")
+    add_dropdown(study_list, "Study_List", "H")
+    add_dropdown(vendor_list, "Vendor_List", "I")
+
+    headers = ['InventoryCode', 'PONumber', 'LotNumber', 'ExpiryDate', 'DateFirstUsed', 'NumberOfPacks', 'DepartmentID', 'StudyID', 'VendorID', 'Status', 'Remarks']
+    ws.append(headers)
+    sample_mat = material_list[0] if material_list else "Sample_INV-000001"
+    sample_dept = dept_list[0] if dept_list else "1"
+    sample_study = study_list[0] if study_list else "1"
+    sample_vendor = vendor_list[0] if vendor_list else "1"
+    ws.append([sample_mat, 'PO-2026', 'LOT-999', '2026-12-31', '', 5, sample_dept, sample_study, sample_vendor, 'Active', 'Initial stock'])
+    
+    out = BytesIO()
+    wb.save(out)
+    out.seek(0)
+    response = make_response(out.read())
+    response.headers['Content-Disposition'] = 'attachment; filename=Batches_Template.xlsx'
+    response.headers['Content-type'] = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    return response
+
+@transactions_bp.route('/api/batches/upload', methods=['POST'])
+@admin_required
+def upload_batches():
+    file = request.files.get('file')
+    if not file: return jsonify({"status": "error", "message": "No file uploaded"}), 400
+    try:
+        wb = load_workbook(file, data_only=True)
+        ws = wb.active
+        rows = list(ws.rows)
+        if len(rows) < 2: return jsonify({"status": "error", "message": "File is empty"}), 400
+        headers = [str(cell.value).strip() if cell.value else f"Col{i}" for i, cell in enumerate(rows[0])]
+        
+        conn = get_db(); c = conn.cursor()
+        c.execute("SELECT id, item_code, material_name, pack_qty, base_unit FROM Inventory_Master"); existing_inv = {r['item_code']: dict(r) for r in c.fetchall()}
+        conn.close()
+
+        parsed_data = []
+        for row in rows[1:]:
+            row_data = {headers[i]: cell.value for i, cell in enumerate(row)}
+            inv_code = str(row_data.get('InventoryCode', '') or '').strip()
+            if not inv_code or inv_code == 'None': continue
+            
+            extracted_code = inv_code.rpartition('_')[-1] if '_' in inv_code else inv_code
+            
+            inv_match = existing_inv.get(extracted_code)
+            
+            num_packs = float(row_data.get('NumberOfPacks') or 0)
+            pack_qty = float(inv_match['pack_qty']) if inv_match and inv_match.get('pack_qty') else 1.0
+            unit = str(inv_match['base_unit']) if inv_match and inv_match.get('base_unit') else 'Nos'
+            quantity_received = num_packs * pack_qty
+            
+            dept_val = str(row_data.get('DepartmentID', '') or '').strip()
+            dept_id = dept_val.rpartition('_')[-1] if '_' in dept_val else dept_val
+            dept_id = int(dept_id) if dept_id.isdigit() else None
+
+            study_val = str(row_data.get('StudyID', '') or '').strip()
+            study_id = study_val.rpartition('_')[-1] if '_' in study_val else study_val
+            study_id = int(study_id) if study_id.isdigit() else None
+
+            vendor_val = str(row_data.get('VendorID', '') or '').strip()
+            vendor_id = vendor_val.rpartition('_')[-1] if '_' in vendor_val else vendor_val
+            vendor_id = int(vendor_id) if vendor_id.isdigit() else None
+            
+            parsed_data.append({
+                "InventoryCode": extracted_code,
+                "MatchedInventoryID": inv_match['id'] if inv_match else None,
+                "MatchedMaterialName": inv_match['material_name'] if inv_match else "NOT FOUND",
+                "PONumber": str(row_data.get('PONumber', '') or '').strip(),
+                "LotNumber": str(row_data.get('LotNumber', '') or '').strip(),
+                "ExpiryDate": str(row_data.get('ExpiryDate', '') or '').strip(),
+                "DateFirstUsed": str(row_data.get('DateFirstUsed', '') or '').strip(),
+                "NumberOfPacks": num_packs,
+                "QuantityReceived": quantity_received,
+                "Unit": unit,
+                "DepartmentID": dept_id,
+                "StudyID": study_id,
+                "VendorID": vendor_id,
+                "Status": str(row_data.get('Status', 'Active') or 'Active').strip(),
+                "Remarks": str(row_data.get('Remarks', '') or '').strip()
+            })
+        return jsonify({"status": "success", "data": parsed_data})
+    except Exception as e: return jsonify({"status": "error", "message": f"Failed to parse Excel: {str(e)}"}), 400
+
+@transactions_bp.route('/api/batches/bulk', methods=['POST'])
+@admin_required
+def bulk_batches():
+    data = request.get_json()
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT MAX(id) FROM Physical_Batches")
+    max_id = c.fetchone()[0] or 0
+    added_count = 0
+    for row in data.get('rows', []):
+        if not row.get('MatchedInventoryID'): continue
+        if not row.get('StudyID'): continue
+        
+        max_id += 1
+        try:
+            code = generate_semantic_id('BAT', max_id, conn)
+            qty = float(row.get('QuantityReceived', 0))
+            c.execute("""INSERT INTO Physical_Batches (batch_code, inventory_id, po_number, lot_number, expiry_date, date_first_used, quantity_received, current_quantity, unit, department_id, study_id, vendor_id, status, remarks) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                      (code, row.get('MatchedInventoryID'), row.get('PONumber', ''), row.get('LotNumber', ''), row.get('ExpiryDate', ''), row.get('DateFirstUsed', ''), qty, qty, row.get('Unit', 'Nos'), row.get('DepartmentID'), row.get('StudyID'), row.get('VendorID'), row.get('Status', 'Active'), row.get('Remarks', '')))
+            added_count += 1
+        except sqlite3.IntegrityError: pass
+    conn.commit()
+    conn.close()
+    trigger_backup()
+    return jsonify({"status": "success", "message": f"Import complete: {added_count} added."})

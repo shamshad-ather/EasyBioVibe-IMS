@@ -140,3 +140,55 @@ def pick_folder():
         return jsonify({"status": "cancelled"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+@system_bp.route('/api/system/migrate_ids', methods=['POST'])
+@admin_required
+def migrate_ids():
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT setting_key, setting_value FROM App_Settings WHERE setting_key IN ('institution_prefix', 'lab_abbrev')")
+    settings = {row['setting_key']: row['setting_value'] for row in c.fetchall()}
+    
+    inst = settings.get('institution_prefix', '')
+    lab = settings.get('lab_abbrev', '')
+    
+    parts = []
+    if inst: parts.append(inst)
+    if lab: parts.append(lab)
+    
+    if not parts:
+        conn.close()
+        return jsonify({"status": "error", "message": "No institution or lab abbreviation set in settings."})
+        
+    prefix_str = "-".join(parts) + "-"
+    
+    tables_to_update = {
+        'Inventory_Master': ('item_code', None),
+        'Equipment_Master': ('equip_code', None),
+        'Documents': ('document_code', None),
+        'Physical_Batches': ('batch_code', 'Usage_Logs.batch_code')
+    }
+    
+    total_updated = 0
+    try:
+        trigger_backup()
+        for table, (col, related_col) in tables_to_update.items():
+            c.execute(f"SELECT id, {col} FROM {table} WHERE {col} NOT LIKE ?", (f"{prefix_str}%",))
+            rows = c.fetchall()
+            for r in rows:
+                old_code = r[col]
+                new_code = f"{prefix_str}{old_code}"
+                c.execute(f"UPDATE {table} SET {col} = ? WHERE id = ?", (new_code, r['id']))
+                if related_col:
+                    rel_table, rel_col = related_col.split('.')
+                    c.execute(f"UPDATE {rel_table} SET {rel_col} = ? WHERE {rel_col} = ?", (new_code, old_code))
+                c.execute("UPDATE History_Logs SET entity_code = ? WHERE entity_code = ?", (new_code, old_code))
+                total_updated += 1
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return jsonify({"status": "error", "message": f"Migration failed: {str(e)}"}), 500
+        
+    conn.close()
+    return jsonify({"status": "success", "message": f"Migrated {total_updated} legacy IDs."})

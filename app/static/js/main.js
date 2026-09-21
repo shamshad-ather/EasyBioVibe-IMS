@@ -72,6 +72,10 @@ function renderSettings(content) {
                 <button type="submit" class="btn btn-primary">Save Settings</button>
             </form>
         </div></div>
+        <div class="card" style="max-width:600px;margin-top:20px;"><div class="card-header"><h2>Legacy ID Migration</h2></div><div class="card-body">
+            <p style="font-size:13px;color:var(--gray-500);margin-bottom:16px;">Update legacy ID codes (Inventory, Equipment, Documents, Batches) to include the current Institution and Lab prefixes. A database backup will automatically be triggered before the migration.</p>
+            <button type="button" class="btn btn-warning" onclick="migrateLegacyIds()">Migrate Legacy IDs</button>
+        </div></div>
         <div class="card" style="max-width:600px;margin-top:20px;"><div class="card-header"><h2>Database</h2></div><div class="card-body">
             <p style="font-size:13px;color:var(--gray-500);margin-bottom:16px;">Export a full backup, or move this instance to a new system by exporting here and importing on the other machine.</p>
             <a href="/api/export_db" class="btn btn-secondary" style="margin-bottom:20px;">Export Database</a>
@@ -98,16 +102,26 @@ window.saveSettings = async function(e) {
 window.importDatabase = async function() {
     const fileInput = document.getElementById('importDbFile');
     if (!fileInput.files.length) { showToast('Choose a .db file first', 'error'); return; }
-    if (!confirm('This replaces the current database with the imported file. Continue?')) return;
+    if (!confirm('This will completely replace the current database. All current data will be lost. Ensure you have backed up if necessary. Continue?')) return;
     
-    const formData = new FormData(); 
-    formData.append('dbfile', fileInput.files[0]);
-    try { 
-        const res = await fetch('/api/import_db', { method: 'POST', body: formData }); 
-        const result = await res.json(); 
-        if (result.status === 'success') showToast(result.message, 'success'); 
-        else showToast(result.message, 'error'); 
-    } catch (err) { showToast('Connection error', 'error'); }
+    const formData = new FormData(); formData.append('dbfile', fileInput.files[0]);
+    showToast('Importing database...', 'info');
+    try {
+        const res = await fetch('/api/import_db', { method: 'POST', body: formData });
+        const result = await res.json();
+        if (result.status === 'success') { showToast(result.message, 'success'); setTimeout(() => window.location.reload(), 2000); }
+        else showToast(result.message, 'error');
+    } catch(err) { showToast('Connection error', 'error'); }
+};
+
+window.migrateLegacyIds = async function() {
+    if (!confirm('Are you sure you want to migrate legacy IDs? This will update codes for Inventory, Equipment, Documents, and Batches to include the current Institution and Lab prefixes. This action cannot be undone, though a backup will be created.')) return;
+    showToast('Migrating legacy IDs...', 'info');
+    try {
+        const res = await apiCall('/api/system/migrate_ids', {}, 'POST');
+        if (res.status === 'success') { showToast(res.message, 'success'); await loadRealData(); } 
+        else showToast(res.message, 'error');
+    } catch(err) { showToast('Connection error', 'error'); }
 };
 
 window.browseFolder = async function() {
