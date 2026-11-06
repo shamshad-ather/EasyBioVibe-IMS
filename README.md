@@ -23,7 +23,7 @@
 - **Backend**: Python 3.11+, Flask
 - **Database**: SQLite3 (WAL mode with concurrent access and foreign keys enabled)
 - **Frontend**: Vanilla JavaScript (ES6 Modules), CSS3, HTML5
-- **Packaging**: Python Wheel (`.whl`), Conda environment launcher, PyInstaller standalone binaries, Inno Setup (Windows installer)
+- **Packaging**: Python Wheel (`.whl`), Source Distribution (`sdist`), Conda environment launcher
 
 ---
 
@@ -87,26 +87,6 @@ On the very first launch, the **Setup Wizard** guides you through initial config
 - **Institution Details**: Lab Name, Lab Abbreviation, and Smart ID Prefix.
 - **Administrator Account**: Set up primary credentials.
 - **Security Questions**: Mandatory setup for offline password recovery.
-
----
-
-## Building and Packaging
-
-### Building Packages Locally
-```bash
-pip install build wheel
-python -m build
-```
-The resulting `.whl` and `.tar.gz` packages will be placed in `dist/`.
-
-### Automated Releases & PyPI Publishing via GitHub Actions
-GitHub Actions (`.github/workflows/build.yml`) builds distribution packages, creates a GitHub Release with attached assets, and publishes to PyPI whenever a tag is pushed:
-
-```bash
-git tag v2026.11.06
-git push origin v2026.11.06
-```
-See [`PACKAGING.md`](PACKAGING.md) for full packaging details and PyPI setup.
 
 ---
 
