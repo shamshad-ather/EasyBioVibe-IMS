@@ -569,17 +569,56 @@ export function renderHistoryLog(content) {
             <div style="display:flex;align-items:center;gap:6px;"><span style="font-size:12px;color:var(--gray-500);font-weight:600;">FROM</span><input type="date" class="form-control" id="histFrom" value="${fromDate}" onchange="renderCurrentPage()"></div>
             <div style="display:flex;align-items:center;gap:6px;"><span style="font-size:12px;color:var(--gray-500);font-weight:600;">TO</span><input type="date" class="form-control" id="histTo" value="${toDate}" onchange="renderCurrentPage()"></div>
         </div>
-        <div class="card"><div class="table-container"><table class="data-table">
-            <thead><tr><th>SN</th><th>Code</th><th>Entity</th><th>Entity Info</th><th>Field</th><th>Old Value</th><th>New Value</th><th>Changed By</th><th>Date</th></tr></thead>
+        <div class="card"><div class="table-container"><table class="data-table history-table">
+            <thead>
+                <tr>
+                    <th class="col-sn">SN</th>
+                    <th class="col-code">Code</th>
+                    <th class="col-entity">Entity</th>
+                    <th class="col-entity-info">Entity Info</th>
+                    <th class="col-field">Field</th>
+                    <th class="col-old-val">Old Value</th>
+                    <th class="col-new-val">New Value</th>
+                    <th class="col-changed-by">Changed By</th>
+                    <th class="col-date">Date</th>
+                </tr>
+            </thead>
             <tbody>
                 ${items.map((h, idx) => {
                     let displayName = h.EntityCode;
-                    if (h.Entity === 'Department' && displayName.startsWith('DEP')) { const d = DB.departments.find(x => x.DepartmentCode === displayName); if(d) displayName = d.DepartmentName; } 
-                    else if (h.Entity === 'Faculty' && displayName.startsWith('FAC')) { const f = DB.faculty.find(x => x.FacultyCode === displayName); if(f) displayName = f.FacultyName; } 
-                    else if (h.Entity === 'Inventory' && displayName.startsWith('INV')) { const i = DB.inventory.find(x => x.InventoryCode === displayName); if(i) displayName = i.MaterialName; } 
-                    else if (h.Entity === 'Study' && displayName.startsWith('STD')) { const s = DB.studies.find(x => x.StudyCode === displayName); if(s) displayName = s.StudyName; }
-                    else if (h.Entity === 'Equipment' && displayName.startsWith('EQP')) { const e = DB.equipment.find(x => x.equip_code === displayName); if(e) displayName = e.name; }
-                    return `<tr><td>${idx + 1}</td><td><span class="code-display">${h.HistoryCode}</span></td><td><span class="badge badge-gray">${h.Entity}</span></td><td><span style="font-weight:500;">${escapeHtml(displayName)}</span></td><td>${escapeHtml(h.FieldChanged)}</td><td style="color:var(--gray-500);font-size:12px;">${escapeHtml(h.OldValue)}</td><td style="color:var(--success);font-size:12px;font-weight:500;">${escapeHtml(h.NewValue)}</td><td>${escapeHtml(h.ChangedBy)}</td><td>${formatDate(h.ChangedDate)}</td></tr>`;
+                    if (h.Entity === 'Department') {
+                        const d = DB.departments.find(x => x.DepartmentCode === displayName || x.code === displayName);
+                        if (d) displayName = d.DepartmentName || d.name;
+                    } else if (h.Entity === 'Faculty') {
+                        const f = DB.faculty.find(x => x.FacultyCode === displayName || x.code === displayName);
+                        if (f) displayName = f.FacultyName || f.name;
+                    } else if (h.Entity === 'Inventory') {
+                        const i = DB.inventory.find(x => x.InventoryCode === displayName || x.item_code === displayName);
+                        if (i) displayName = i.MaterialName;
+                    } else if (h.Entity === 'Study' || h.Entity === 'Studies') {
+                        const s = DB.studies.find(x => x.StudyCode === displayName || x.code === displayName || x.name === displayName);
+                        if (s) displayName = s.StudyName || s.name;
+                    } else if (h.Entity === 'Equipment') {
+                        const e = DB.equipment.find(x => x.equip_code === displayName);
+                        if (e) displayName = e.name;
+                    } else if (h.Entity === 'Usage' || h.Entity === 'Batch') {
+                        const b = DB.batches.find(x => x.BatchCode === displayName || x.batch_code === displayName);
+                        if (b) {
+                            const inv = DB.inventory.find(i => i.id === b.InventoryID);
+                            if (inv) displayName = `${inv.MaterialName} (${b.BatchCode || b.batch_code})`;
+                        }
+                    }
+                    return `<tr>
+                        <td class="col-sn">${idx + 1}</td>
+                        <td class="col-code"><span class="code-display">${h.HistoryCode}</span></td>
+                        <td class="col-entity"><span class="badge badge-gray">${h.Entity}</span></td>
+                        <td class="col-entity-info"><span style="font-weight:500;">${escapeHtml(displayName)}</span></td>
+                        <td class="col-field">${escapeHtml(h.FieldChanged)}</td>
+                        <td class="col-old-val" style="color:var(--gray-500);font-size:12px;">${escapeHtml(h.OldValue)}</td>
+                        <td class="col-new-val" style="color:var(--success);font-size:12px;font-weight:500;">${escapeHtml(h.NewValue)}</td>
+                        <td class="col-changed-by">${escapeHtml(h.ChangedBy)}</td>
+                        <td class="col-date">${formatDate(h.ChangedDate)}</td>
+                    </tr>`;
                 }).join('')}
             </tbody>
         </table></div></div>
@@ -604,7 +643,7 @@ export function renderGlobalUsage(content) {
             <div style="display:flex;align-items:center;gap:6px;"><span style="font-size:12px;color:var(--gray-500);font-weight:600;">FROM</span><input type="date" class="form-control" id="usageFrom" value="${fromDate}" onchange="renderCurrentPage()"></div>
             <div style="display:flex;align-items:center;gap:6px;"><span style="font-size:12px;color:var(--gray-500);font-weight:600;">TO</span><input type="date" class="form-control" id="usageTo" value="${toDate}" onchange="renderCurrentPage()"></div>
         </div>
-        <div class="card"><div class="table-container"><table class="data-table">
+        <div class="card"><div class="table-container"><table class="data-table usage-table">
             <thead><tr><th>SN</th><th>Date & Time</th><th>Material Detail</th><th>Batch</th><th>Used By</th><th>Recorded By</th><th>Study</th><th>Equipment Used</th><th>Qty Used</th><th>Balance</th></tr></thead>
             <tbody>
                 ${items.map((u, idx) => {

@@ -29,7 +29,7 @@ export function renderEquipment(content) {
             <button class="btn btn-secondary" onclick="document.getElementById('bulkUploadEquip').click()">Upload Excel</button>
             <button class="btn btn-primary" onclick="openEquipmentModal()"><svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg> Add Asset</button>` : ''}
         </div>
-        <div class="card"><div class="table-container"><table class="data-table">
+        <div class="card"><div class="table-container"><table class="data-table equipment-table">
             <thead><tr><th>SN</th><th>Asset Code & Name</th><th>Make / Model</th>${DB.settings.system_mode !== 'Single' ? '<th>Department</th>' : ''}<th>Compliance Docs</th><th>Status</th><th>Actions</th></tr></thead>
             <tbody>
                 ${items.map((e, idx) => {

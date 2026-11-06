@@ -60,7 +60,7 @@ export function renderInventory(content) {
             <select class="form-control" id="filterInvType" onchange="renderCurrentPage()"><option value="">All Types</option>${CONSTANTS.MATERIAL_TYPES.map(t=>`<option value="${t}" ${filterType===t?'selected':''}>${t}</option>`).join('')}</select>
             ${DB.settings.currentRole === 'Admin' ? `<input type="file" id="bulkUploadFile" accept=".xlsx" style="display:none" onchange="handleBulkUpload(event)"><button class="btn btn-secondary" onclick="window.location.href='/api/inventory/template'">Download Template</button><button class="btn btn-secondary" onclick="document.getElementById('bulkUploadFile').click()">Upload Excel</button><button class="btn btn-primary" onclick="openInventoryModal()"><svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg> Add Material</button>` : ''}
         </div>
-        <div class="card"><div class="table-container"><table class="data-table">
+        <div class="card"><div class="table-container"><table class="data-table inventory-table">
             <thead><tr><th>SN</th><th>Material</th><th>Type</th><th>Unit</th><th>Stock</th><th>Alert</th><th>Actions</th></tr></thead>
             <tbody>
                 ${items.map((i, idx) => {
@@ -188,7 +188,7 @@ export function renderBatches(content) {
             <button class="btn btn-secondary" onclick="document.getElementById('bulkUploadBatch').click()">Upload Excel</button>
             <button class="btn btn-primary" onclick="openBatchModal()"><svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg> Add Batch</button>` : `<button class="btn btn-primary" onclick="openBatchModal()"><svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg> Add Batch</button>`}
         </div>
-        <div class="card"><div class="table-container"><table class="data-table">
+        <div class="card"><div class="table-container"><table class="data-table batches-table">
             <thead><tr><th>SN</th><th>Material</th>${DB.settings.system_mode !== 'Single'?'<th>Department</th>':''}<th>Study</th><th>PO No</th><th>Lot</th><th>Expiry</th><th>Received</th><th>Current</th><th>Status</th><th>Actions</th></tr></thead>
             <tbody>
                 ${items.map((b, idx) => {

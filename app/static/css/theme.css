@@ -54,6 +54,8 @@
     margin: 0;
     padding: 0;
     box-sizing: border-box;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
 }
 
 body {
@@ -63,18 +65,18 @@ body {
     line-height: 1.5;
 }
 
-/* Custom Scrollbar */
+/* Custom Sleek Scrollbar */
 ::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
+    width: 6px;
+    height: 6px;
 }
 ::-webkit-scrollbar-track {
-    background: var(--paper);
+    background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-    background: var(--accent);
+    background: rgba(255, 255, 255, 0.18);
     border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-    background: var(--accent-light);
+    background: rgba(255, 255, 255, 0.35);
 }
