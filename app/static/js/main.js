@@ -61,7 +61,7 @@ function renderSettings(content) {
                 <div class="form-group"><label>System Mode</label><input type="text" class="form-control" value="${DB.settings.system_mode === 'Single' ? 'Single Lab' : 'Centralized Facility'}" disabled></div>
                 <div class="form-group"><label>Full Lab Name</label><input type="text" class="form-control" id="sysLabName" value="${escapeHtml(DB.settings.lab_name)}" required></div>
                 <div class="form-group"><label>Lab Abbreviation (Header Branding)</label><input type="text" class="form-control" id="sysLabAbbrev" value="${escapeHtml(DB.settings.lab_abbrev)}" required></div>
-                <div class="form-group"><label>Institution Prefix (Smart IDs)</label><input type="text" class="form-control" id="sysInstPrefix" value="${escapeHtml(DB.settings.institution_prefix || '')}" placeholder="e.g., MGMMCNERUL"></div>
+                <div class="form-group"><label>Institution Prefix (Smart IDs)</label><input type="text" class="form-control" id="sysInstPrefix" value="${escapeHtml(DB.settings.institution_prefix || '')}" placeholder="e.g., INST"></div>
                 <div class="form-group">
                     <label>Safe Backup Directory Path</label>
                     <div style="display:flex;gap:10px;">

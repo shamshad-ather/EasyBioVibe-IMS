@@ -10,7 +10,7 @@
 - **Studies & Project Allocation**: Centralized management of research, diagnostic, and QC activities. Assign studies to Principal Investigators (PIs) and Departments with automatic cross-mapping.
 - **Equipment Management**: Track lab instruments, maintain service and calibration event logs, and record locations.
 - **Cross-Platform Native Desktop Integration**: Native OS launcher generator creating Start Menu shortcuts on Windows (`.lnk`) and App Drawer entries on Linux (`.desktop`), directly bound to isolated Conda environments.
-- **Smart Semantic IDs**: Auto-generated, human-readable IDs tailored to your institution (e.g., `MGMMCNERUL-CIRL-INV000001`, `MGMMCNERUL-CIRL-STU001`) with built-in legacy ID migration.
+- **Smart Semantic IDs**: Auto-generated, human-readable IDs tailored to your institution (e.g., `INST-DEPT-INV000001`, `INST-DEPT-STU001`) with built-in legacy ID migration.
 - **Unified Personnel & Roles**: Role-based access control (Admin, Manager, User) with flexible study assignment controls.
 - **Document Compliance**: Securely upload and link SOPs, SDSs, and compliance certificates directly to materials and equipment.
 - **Safe Native Backups**: Automatic heartbeat database backup on application close or idle, plus manual directory exports.
