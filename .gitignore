@@ -1,10 +1,9 @@
 build/
 dist/
-*.spec
 *.egg-info/
 *.whl
 __pycache__/
-packaging/windows/Output/
+*.pyc
 easylab_database.db
 easybiovibe.db
 app.md

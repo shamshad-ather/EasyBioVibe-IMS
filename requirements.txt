@@ -1,5 +1,4 @@
 Flask
 Flask-Bcrypt
 openpyxl
-pyinstaller
 Pillow

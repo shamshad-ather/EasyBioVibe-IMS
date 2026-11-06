@@ -1,86 +1,88 @@
-# Packaging EasyBioVibe-IMS as a desktop app
+# Packaging & Distribution: EasyBioVibe-IMS
 
-`run.py` is the application entry point: when packaged or run locally, it starts the Flask server, automatically finds an available local port, opens your default browser to it, and manages application lifecycle.
+EasyBioVibe-IMS is distributed as a universal Python wheel (`.whl`) and source distribution (`sdist`), published directly to **PyPI** and attached to **GitHub Releases**.
 
-There is no single binary that runs on Windows, macOS, and Linux — each OS needs its own build (PyInstaller bundles a platform-specific interpreter). What's automated instead is the **pipeline**: `.github/workflows/build.yml` builds all three from this repository whenever you push a tag like `v2026.09.03`, and attaches all files to a GitHub Release.
+Instead of bundling heavy platform-specific binaries using PyInstaller and Inno Setup, EasyBioVibe-IMS installs cleanly into an isolated Conda or virtual environment on any operating system (Windows, Linux, macOS). It provides native desktop integration through its built-in cross-platform launcher generator (`easybiovibe --install-shortcut`).
 
-## Building locally
+---
 
-### Linux
+## 1. End-User Installation Workflow
 
-```bash
-pip install -r requirements.txt
-pyinstaller --noconfirm --onefile --windowed \
-    --name "EasyBioVibe-IMS" \
-    --icon "assets/icon_256.png" \
-    --add-data "app/templates:templates" \
-    --add-data "app/static:static" \
-    --add-data "VERSION.md:." \
-    --hidden-import "app.routes.auth" \
-    --hidden-import "app.routes.system" \
-    --hidden-import "app.routes.masters" \
-    --hidden-import "app.routes.inventory" \
-    --hidden-import "app.routes.transactions" \
-    --hidden-import "app.routes.equipment" \
-    run.py
-```
-
-Result: `dist/EasyBioVibe-IMS`, a single executable, no Python required on the target machine. To install it into the app menu for the current user (no sudo):
+End-users install directly from PyPI (or via a downloaded wheel):
 
 ```bash
-cp dist/EasyBioVibe-IMS packaging/linux/
-cd packaging/linux && ./install.sh
+# 1. Create a dedicated Conda environment
+conda create -n easybiovibe python=3.11 -y
+conda activate easybiovibe
+
+# 2. Install from PyPI
+pip install easybiovibe-ims
+
+# 3. Generate native Start Menu / App Drawer desktop icon
+easybiovibe --install-shortcut
 ```
 
-### Windows (run on Windows or via GitHub Actions)
+### Native Desktop Integration
+- **Windows**: Dynamically reads `sys.executable` and creates an application shortcut (`.lnk`) in `%APPDATA%\Microsoft\Windows\Start Menu\Programs\EasyBioVibe-IMS.lnk` pointing to the isolated Conda executable, with the application icon copied to `~/.easybiovibe/icon.ico`.
+- **Linux**: Dynamically reads `sys.executable` and generates a FreeDesktop `.desktop` entry in `~/.local/share/applications/easybiovibe.desktop`, with the high-resolution icon copied to `~/.easybiovibe/icon.png`.
 
-```powershell
-pyinstaller --noconfirm --onefile --windowed `
-    --name "EasyBioVibe-IMS" `
-    --icon "assets\icon.ico" `
-    --add-data "app/templates;templates" `
-    --add-data "app/static;static" `
-    --add-data "VERSION.md;." `
-    --hidden-import "app.routes.auth" `
-    --hidden-import "app.routes.system" `
-    --hidden-import "app.routes.masters" `
-    --hidden-import "app.routes.inventory" `
-    --hidden-import "app.routes.transactions" `
-    --hidden-import "app.routes.equipment" `
-    run.py
-```
+---
 
-Then compile `packaging/windows/installer.iss` with Inno Setup (free,
-[https://jrsoftware.org/isinfo.php](https://jrsoftware.org/isinfo.php)) to get a proper `EasyBioVibe-IMS-Setup-2026.07.03.exe`
-— installs per-user (no admin rights needed, useful on institutional PCs),
-adds Start Menu + optional Desktop shortcut, includes an uninstaller.
+## 2. Building the Package Locally
 
-### macOS (needs to run on a Mac, or via the GitHub Action)
-
-Same command as Linux but add `--windowed`; PyInstaller produces
-`dist/EasyBioVibe-IMS.app` directly. Wrap it in a `.dmg` for distribution:
+Ensure you have `build` and `wheel` installed:
 
 ```bash
-hdiutil create -volname "EasyBioVibe-IMS" -srcfolder dist -ov -format UDZO EasyBioVibe-IMS.dmg
-
+pip install build wheel
 ```
 
-## Automated builds (recommended, since this is going open-source)
-
-Push a version tag and GitHub Actions builds all three and publishes a
-Release with all three files attached:
+Build the distribution packages:
 
 ```bash
-git tag v2026.07.03
-git push origin v2026.07.03
-
+python -m build
 ```
 
-You can also trigger it manually from the Actions tab without tagging, to
-just check the builds still pass — those runs upload artifacts but don't
-publish a Release.
+This creates:
+- `dist/easybiovibe_ims-<version>-py3-none-any.whl` (Universal Wheel)
+- `dist/easybiovibe_ims-<version>.tar.gz` (Source Distribution)
 
-## Notes
+To test the built wheel locally in a clean environment:
 
-* The database lives dynamically inside a hidden cache folder (`~/.cache/easybiovibe/easybiovibe.db`) regardless of where the app is installed, so reinstalling/upgrading never touches your data.
-* `run.py` dynamically binds to an available port and launches your default web browser automatically upon startup.
+```bash
+pip install dist/easybiovibe_ims-1.0.0-py3-none-any.whl
+easybiovibe --install-shortcut
+```
+
+---
+
+## 3. Automated GitHub Actions Pipeline
+
+Whenever a new version tag (e.g. `v2026.11.06`) is pushed, [`.github/workflows/build.yml`](.github/workflows/build.yml) automatically:
+1. Builds the source distribution and universal wheel package.
+2. Creates a GitHub Release with release notes and attaches the wheel and sdist files.
+3. Automatically publishes the package to **PyPI** using PyPI Trusted Publishing.
+
+To release a new version:
+
+```bash
+# 1. Update VERSION.md (e.g., v2026.11.06)
+# 2. Commit and tag:
+git commit -am "release: v2026.11.06"
+git tag v2026.11.06
+git push origin v2026.11.06
+```
+
+---
+
+## 4. Setting up PyPI Trusted Publishing
+
+PyPI supports **Trusted Publishing (OIDC)**, which eliminates the need to manually manage or rotate API tokens in GitHub secrets:
+
+1. Log in to [PyPI](https://pypi.org/).
+2. Go to **Account Settings** $\to$ **Publishing** $\to$ **Add a new publisher with GitHub**.
+3. Fill in:
+   - **PyPI Project Name**: `easybiovibe-ims`
+   - **Owner / Organization**: `shamshad-ather`
+   - **Repository Name**: `EasyBioVibe-IMS`
+   - **Workflow name**: `build.yml`
+4. That's it! GitHub Actions will securely authenticate with PyPI via OIDC tokens and publish each release automatically.

@@ -1,4 +1,4 @@
-name: Build and Release EasyBio.Vibe
+name: Build, Release and Publish to PyPI
 
 on:
   push:
@@ -7,29 +7,11 @@ on:
   workflow_dispatch:
 
 jobs:
-  compile:
-    runs-on: ${{ matrix.os }}
+  build-release-publish:
+    runs-on: ubuntu-latest
     permissions:
       contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            name: linux
-            separator: ":"
-            ext: ""
-            icon: "assets/icon_256.png"
-          - os: windows-latest
-            name: windows
-            separator: ";"
-            ext: ".exe"
-            icon: "assets/icon.ico"
-          - os: macos-latest
-            name: macos
-            separator: ":"
-            ext: ""
-            icon: ""
+      id-token: write # Required for PyPI Trusted Publishing (OIDC)
 
     steps:
       - name: Checkout Source Code
@@ -40,109 +22,32 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Dependencies
+      - name: Install Build Tools
         run: |
           python -m pip install --upgrade pip
-          pip install Flask flask-bcrypt pyinstaller openpyxl wheel
+          pip install build wheel
 
       - name: Extract Version from VERSION.md
         id: extract_version
-        shell: bash
         run: |
           VERSION=$(cat VERSION.md)
           echo "APP_VERSION=$VERSION" >> $GITHUB_ENV
 
-      - name: Build Executable with PyInstaller (Windows & Linux)
-        if: matrix.os != 'macos-latest'
-        run: >
-          pyinstaller --noconfirm --onefile --windowed
-          --name "EasyBio.Vibe-${{ env.APP_VERSION }}-${{ matrix.name }}${{ matrix.ext }}"
-          --icon "${{ matrix.icon }}"
-          --add-data "app/templates${{ matrix.separator }}templates"
-          --add-data "app/static${{ matrix.separator }}static"
-          --add-data "VERSION.md${{ matrix.separator }}."
-          --hidden-import "app.routes.auth"
-          --hidden-import "app.routes.system"
-          --hidden-import "app.routes.masters"
-          --hidden-import "app.routes.inventory"
-          --hidden-import "app.routes.transactions"
-          --hidden-import "app.routes.equipment"
-          run.py
-
-      - name: Build Executable with PyInstaller (macOS)
-        if: matrix.os == 'macos-latest'
-        run: >
-          pyinstaller --noconfirm --onefile
-          --name "EasyBio.Vibe-${{ env.APP_VERSION }}-${{ matrix.name }}${{ matrix.ext }}"
-          --add-data "app/templates${{ matrix.separator }}templates"
-          --add-data "app/static${{ matrix.separator }}static"
-          --add-data "VERSION.md${{ matrix.separator }}."
-          --hidden-import "app.routes.auth"
-          --hidden-import "app.routes.system"
-          --hidden-import "app.routes.masters"
-          --hidden-import "app.routes.inventory"
-          --hidden-import "app.routes.transactions"
-          --hidden-import "app.routes.equipment"
-          run.py
-
-      - name: Package Linux Desktop Installer (Tarball)
-        if: matrix.os == 'ubuntu-latest'
+      - name: Build Universal Wheel and Source Distribution
         run: |
-          mkdir -p dist/linux_installer
-          # Move fresh executable and rename it to what install.sh expects
-          mv "dist/EasyBio.Vibe-${{ env.APP_VERSION }}-linux" "dist/linux_installer/EasyBioVibe-IMS"
-          # Copy the packaging assets
-          cp packaging/linux/easybiovibe-ims.desktop dist/linux_installer/
-          cp packaging/linux/icon_256.png dist/linux_installer/
-          cp packaging/linux/install.sh dist/linux_installer/
-          cp packaging/linux/uninstall.sh dist/linux_installer/
-          # Ensure execute permissions
-          chmod +x dist/linux_installer/*.sh dist/linux_installer/EasyBioVibe-IMS
-          # Create the tar.gz file
-          cd dist/linux_installer
-          tar -czvf "../EasyBio.Vibe-${{ env.APP_VERSION }}-linux-installer.tar.gz" *
-          cd ../..
-          # Build the universal Python wheel package
-          pip wheel --no-deps -w dist .
+          python -m build
 
-      - name: Package Windows Installer (Inno Setup)
-        if: matrix.os == 'windows-latest'
-        shell: bash
-        run: |
-          # Rename the raw standalone exe to match what Inno Setup expects
-          mv "dist/EasyBio.Vibe-${{ env.APP_VERSION }}-windows.exe" "dist/EasyBioVibe-IMS.exe"
-          # Compile the installer (ISCC is pre-installed on GitHub windows-latest runners)
-          iscc packaging/windows/installer.iss
-
-      - name: Set Upload File Path (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: bash
-        run: echo "UPLOAD_FILE=packaging/windows/Output/EasyBioVibe-IMS-Setup-${{ env.APP_VERSION }}.exe" >> $GITHUB_ENV
-
-      - name: Package macOS DMG
-        if: matrix.os == 'macos-latest'
-        run: |
-          mkdir -p dist/dmg_folder
-          mv "dist/EasyBio.Vibe-${{ env.APP_VERSION }}-macos" "dist/dmg_folder/EasyBioVibe-IMS"
-          chmod +x "dist/dmg_folder/EasyBioVibe-IMS"
-          hdiutil create -volname "EasyBioVibe-IMS" -srcfolder dist/dmg_folder -ov -format UDZO "dist/EasyBio.Vibe-${{ env.APP_VERSION }}-macos.dmg"
-
-      - name: Set Upload File Path (macOS)
-        if: matrix.os == 'macos-latest'
-        shell: bash
-        run: echo "UPLOAD_FILE=dist/EasyBio.Vibe-${{ env.APP_VERSION }}-macos.dmg" >> $GITHUB_ENV
-
-      - name: Set Upload File Path (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        shell: bash
-        run: echo "UPLOAD_FILE=dist/EasyBio.Vibe-${{ env.APP_VERSION }}-linux-installer.tar.gz" >> $GITHUB_ENV
-
-      - name: Upload Build to GitHub Releases
+      - name: Attach Assets to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            ${{ env.UPLOAD_FILE }}
-            dist/*.whl
+          files: dist/*
           tag_name: ${{ env.APP_VERSION }}
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish Package to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+        continue-on-error: true # Allows workflow to succeed even if PyPI credentials/OIDC are pending setup

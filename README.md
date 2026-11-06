@@ -29,9 +29,9 @@
 
 ## Installation & Deployment
 
-### Option 1: Conda Environment via Python Wheel (Recommended)
+### Option 1: Conda / Virtual Environment via PyPI (Recommended)
 
-EasyBio.Vibe IMS can be installed inside an isolated Conda or Micromamba environment and integrated directly into your operating system's application launcher.
+EasyBio.Vibe IMS is distributed as a universal Python package on **PyPI**. It can be installed inside an isolated Conda or virtual environment and integrated directly into your operating system's application launcher.
 
 ```bash
 # 1. Create a dedicated Python 3.11 environment
@@ -40,8 +40,8 @@ conda create -n easybiovibe python=3.11 -y
 # 2. Activate the environment
 conda activate easybiovibe
 
-# 3. Install the wheel package
-pip install easybiovibe-ims-1.0.0-py3-none-any.whl
+# 3. Install from PyPI (or via a downloaded .whl from GitHub Releases)
+pip install easybiovibe-ims
 
 # 4. Generate native OS desktop launcher / Start Menu shortcut
 easybiovibe --install-shortcut
@@ -49,19 +49,7 @@ easybiovibe --install-shortcut
 
 *For more details on launcher paths, port overrides, and maintenance, see the [Conda Deployment Guide](conda_install.md).*
 
-### Option 2: Pre-built Standalone Binaries
-
-Download pre-compiled binaries from the GitHub [Releases](https://github.com/shamshad-ather/EasyBioVibe-IMS/releases) page:
-
-- **Windows**: Run `EasyBioVibe-IMS-Setup-<version>.exe` to install per-user (no administrative permissions required). Adds a Start Menu shortcut and an uninstaller.
-- **Linux**: Extract `EasyBio.Vibe-<version>-linux-installer.tar.gz` and run:
-  ```bash
-  ./install.sh
-  ```
-  This installs the application to `~/.local/bin` and adds an icon to your desktop Application Menu.
-- **macOS**: Mount `EasyBio.Vibe-<version>-macos.dmg` and copy the application bundle to your Applications folder.
-
-### Option 3: Running from Source
+### Option 2: Running from Source (Development)
 
 ```bash
 # 1. Clone the repository
@@ -104,23 +92,21 @@ On the very first launch, the **Setup Wizard** guides you through initial config
 
 ## Building and Packaging
 
-### Building the Wheel Package
+### Building Packages Locally
 ```bash
 pip install build wheel
-python -m build --wheel
+python -m build
 ```
-The resulting `.whl` package will be placed in `dist/`.
+The resulting `.whl` and `.tar.gz` packages will be placed in `dist/`.
 
-### Building Standalone Binaries locally
-Refer to [`PACKAGING.md`](PACKAGING.md) for full instructions on building with PyInstaller on Linux, Windows, and macOS.
-
-### Automated Releases via GitHub Actions
-GitHub Actions (`.github/workflows/build.yml`) builds binaries and attaches them to a new release whenever a tag is pushed:
+### Automated Releases & PyPI Publishing via GitHub Actions
+GitHub Actions (`.github/workflows/build.yml`) builds distribution packages, creates a GitHub Release with attached assets, and publishes to PyPI whenever a tag is pushed:
 
 ```bash
 git tag v2026.11.06
 git push origin v2026.11.06
 ```
+See [`PACKAGING.md`](PACKAGING.md) for full packaging details and PyPI setup.
 
 ---
 

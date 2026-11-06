@@ -15,8 +15,10 @@ conda create -n easybiovibe python=3.11 -y
 # 2. Activate the environment
 conda activate easybiovibe
 
-# 3. Install the application wheel
-pip install easybiovibe-ims-1.0.0-py3-none-any.whl
+# 3. Install from PyPI (or via a downloaded .whl file)
+pip install easybiovibe-ims
+# Alternatively, from a local wheel:
+# pip install easybiovibe-ims-1.0.0-py3-none-any.whl
 
 # 4. Generate native OS desktop launcher / Start Menu shortcut
 easybiovibe --install-shortcut
