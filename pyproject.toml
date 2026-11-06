@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "easybiovibe-ims"
-version = "1.0.0"
+dynamic = ["version"]
 description = "Inventory management system for molecular biology / RT-qPCR labs"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -20,6 +20,9 @@ easybiovibe = "app.run:main"
 
 [tool.setuptools]
 include-package-data = true
+
+[tool.setuptools.dynamic]
+version = {file = "VERSION.md"}
 
 [tool.setuptools.packages.find]
 where = ["."]
