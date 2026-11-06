@@ -118,5 +118,18 @@ def init_db():
         # Migrate Studies.pi_user_id
         c.execute("UPDATE Studies SET pi_user_id=? WHERE faculty_id=?", (user_id, fac['id']))
         
+    # Ensure Studies.department_id is backfilled from the assigned PI if currently NULL or 0
+    c.execute("""
+        UPDATE Studies 
+        SET department_id = (
+            SELECT d.id FROM Users u 
+            JOIN Departments d ON d.name = u.department 
+            WHERE u.id = Studies.pi_user_id
+        )
+        WHERE (department_id IS NULL OR department_id = 0) AND pi_user_id IS NOT NULL
+    """)
+    # Also sync faculty_id with pi_user_id if faculty_id is NULL
+    c.execute("UPDATE Studies SET faculty_id = pi_user_id WHERE faculty_id IS NULL AND pi_user_id IS NOT NULL")
+        
     conn.commit()
     conn.close()

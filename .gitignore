@@ -1,6 +1,8 @@
 build/
 dist/
 *.spec
+*.egg-info/
+*.whl
 __pycache__/
 packaging/windows/Output/
 easylab_database.db

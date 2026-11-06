@@ -1,0 +1,7 @@
+include assets/icon_256.png
+include assets/icon.ico
+recursive-include assets *
+recursive-include app/templates *
+recursive-include app/static *
+include VERSION.md
+include README.md

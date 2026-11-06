@@ -14,17 +14,28 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 def get_app_version():
-    # Because VERSION.md is in the root directory (one level above app/)
     try:
         if hasattr(sys, '_MEIPASS'):
             filepath = os.path.join(sys._MEIPASS, 'VERSION.md')
-        else:
-            filepath = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'VERSION.md')
+            if os.path.exists(filepath):
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    return f.read().strip()
+                    
+        for candidate in [
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'VERSION.md'),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), 'VERSION.md'),
+        ]:
+            if os.path.exists(candidate):
+                with open(candidate, 'r', encoding='utf-8') as f:
+                    return f.read().strip()
+
+        try:
+            import importlib.metadata
+            return "v" + importlib.metadata.version("easybiovibe-ims")
+        except Exception:
+            pass
             
-        if not os.path.exists(filepath):
-            return "vUnknown"
-        with open(filepath, 'r', encoding='utf-8') as f:
-            return f.read().strip()
+        return "vUnknown"
     except Exception:
         return "vUnknown"
 

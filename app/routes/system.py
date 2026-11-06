@@ -166,7 +166,8 @@ def migrate_ids():
         'Inventory_Master': ('item_code', None),
         'Equipment_Master': ('equip_code', None),
         'Documents': ('document_code', None),
-        'Physical_Batches': ('batch_code', 'Usage_Logs.batch_code')
+        'Physical_Batches': ('batch_code', 'Usage_Logs.batch_code'),
+        'Studies': ('code', None)
     }
     
     total_updated = 0

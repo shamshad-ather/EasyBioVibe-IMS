@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "easybiovibe-ims"
+version = "1.0.0"
+description = "Inventory management system for molecular biology / RT-qPCR labs"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "Flask>=2.0.0",
+    "Flask-Bcrypt>=1.0.0",
+    "openpyxl>=3.0.0",
+    "Pillow>=9.0.0",
+]
+
+[project.scripts]
+easybiovibe = "app.run:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*", "assets*"]
+
+[tool.setuptools.package-data]
+app = [
+    "templates/**/*",
+    "static/**/*",
+]
+assets = [
+    "*.png",
+    "*.ico",
+]
+
+[tool.setuptools.data-files]
+"assets" = [
+    "assets/icon_256.png",
+    "assets/icon.ico",
+]

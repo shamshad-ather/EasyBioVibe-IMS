@@ -246,38 +246,70 @@ export function renderStudies(content) {
 window.openStudyModal = function(id, preselectFacId) {
     const item = id ? getLookup(id, 'studies') : null;
     const targetFac = item ? item.FacultyID : (preselectFacId || '');
+    let targetDept = item ? item.DepartmentID : '';
+    if (!targetDept && targetFac) {
+        const fac = getLookup(targetFac, 'faculty');
+        if (fac && fac.DepartmentID) targetDept = fac.DepartmentID;
+    }
+    const singleDeptId = DB.departments.find(d => d.Status === 'Active')?.id || '';
+
     openModal(item ? 'Edit Study' : 'Add Study', `
         <form id="studyForm" onsubmit="saveStudy(event)">
             <div class="form-group"><label>Study Code</label><input type="text" class="form-control" value="${item?item.StudyCode:generateId('STD','studies')}" disabled></div>
             <div class="form-group"><label>Study Name <span class="required">*</span></label><input type="text" class="form-control" name="StudyName" value="${item?escapeHtml(item.StudyName):''}" required></div>
             <div class="form-group"><label>Study Type <span class="required">*</span></label><select class="form-control" name="StudyType" required>${CONSTANTS.STUDY_TYPES.map(t=>`<option value="${t}" ${item&&item.StudyType===t?'selected':''}>${t}</option>`).join('')}</select></div>
-            <div class="form-group"><label>Faculty/PI <span class="required">*</span></label><select class="form-control" name="pi_user_id" required onchange="updateStudyDept()"><option value="">Select Faculty</option>${DB.faculty.filter(f=>f.Status==='Active').map(f=>`<option value="${f.id}" ${String(targetFac)===String(f.id)?'selected':''}>${escapeHtml(f.FacultyName)}</option>`).join('')}</select></div>
-            <div class="form-group" style="${DB.settings.system_mode === 'Single' ? 'display:none;' : ''}"><label>Department</label><input type="text" class="form-control" id="studyDeptDisplay" value="${item?(getLookup(item.DepartmentID,'departments')?.DepartmentName||''):''}" disabled><input type="hidden" name="DepartmentID" id="studyDeptId" value="${item?item.DepartmentID:''}"></div>
+            <div class="form-group"><label>Faculty/PI <span class="required">*</span></label><select class="form-control" name="pi_user_id" id="studyPiSelect" required onchange="updateStudyDept()"><option value="">Select Faculty</option>${DB.faculty.filter(f=>f.Status==='Active').map(f=>`<option value="${f.id}" ${String(targetFac)===String(f.id)?'selected':''}>${escapeHtml(f.FacultyName)}</option>`).join('')}</select></div>
+            <div class="form-group" style="${DB.settings.system_mode === 'Single' ? 'display:none;' : ''}">
+                <label>Department <span class="required">*</span></label>
+                <select class="form-control" name="DepartmentID" id="studyDeptSelect" required>
+                    ${DB.settings.system_mode === 'Single' ? `<option value="${singleDeptId}" selected>Main Lab</option>` : `<option value="">Select Department</option>${DB.departments.filter(d=>d.Status==='Active').map(d=>`<option value="${d.id}" ${String(targetDept)===String(d.id)?'selected':''}>${escapeHtml(d.DepartmentName)}</option>`).join('')}`}
+                </select>
+            </div>
             <div class="form-group"><label>Description</label><textarea class="form-control" name="Description" rows="2">${item?escapeHtml(item.Description):''}</textarea></div>
             <div class="form-group"><label>Status</label><select class="form-control" name="Status"><option value="Active" ${item&&item.Status==='Active'?'selected':''}>Active</option><option value="Inactive" ${item&&item.Status==='Inactive'?'selected':''}>Inactive</option></select></div>
             ${item?`<input type="hidden" name="id" value="${item.id}">`:''}
         </form>
     `, null, `<button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button><button type="button" class="btn btn-primary" onclick="document.getElementById('studyForm').dispatchEvent(new Event('submit', {cancelable: true}))">Save</button>`);
-    if (targetFac) window.updateStudyDept();
+    if (targetFac && !targetDept) window.updateStudyDept();
 };
 
 window.updateStudyDept = function() {
-    const facId = document.querySelector('#studyForm [name="FacultyID"]').value;
+    const facSelect = document.querySelector('#studyForm [name="pi_user_id"]') || document.querySelector('#studyForm [name="FacultyID"]');
+    if (!facSelect) return;
+    const facId = facSelect.value;
     const fac = getLookup(facId, 'faculty');
-    if (fac) { document.getElementById('studyDeptDisplay').value = getLookup(fac.DepartmentID, 'departments')?.DepartmentName || ''; document.getElementById('studyDeptId').value = fac.DepartmentID; }
+    const deptSelect = document.getElementById('studyDeptSelect');
+    if (fac && fac.DepartmentID && deptSelect) {
+        deptSelect.value = String(fac.DepartmentID);
+    }
 };
 
 window.saveStudy = async function(e) {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(document.getElementById('studyForm')));
     const item = data.id ? getLookup(data.id, 'studies') : null;
-    const payload = { id: data.id ? parseInt(data.id) : null, name: data.StudyName, type: data.StudyType, pi_user_id: parseInt(data.pi_user_id), department_id: parseInt(data.DepartmentID) || null, description: data.Description, status: data.Status };
+    
+    let deptId = parseInt(data.DepartmentID) || null;
+    if (!deptId && data.pi_user_id) {
+        const fac = getLookup(data.pi_user_id, 'faculty');
+        if (fac && fac.DepartmentID) deptId = parseInt(fac.DepartmentID);
+    }
+
+    const payload = { 
+        id: data.id ? parseInt(data.id) : null, 
+        name: data.StudyName, 
+        type: data.StudyType, 
+        pi_user_id: parseInt(data.pi_user_id), 
+        department_id: deptId, 
+        description: data.Description, 
+        status: data.Status 
+    };
 
     try {
         const res = await apiCall('/api/studies', payload, 'POST');
         if (res.status === 'success') {
             const code = item ? item.StudyCode : payload.name;
-            await window.logChangedFields('Studies', code, item, { StudyName: payload.name, StudyType: payload.type, FacultyID: String(payload.pi_user_id), DepartmentID: String(payload.department_id || ''), Description: payload.description, Status: payload.status });
+            await window.logChangedFields('Study', code, item, { StudyName: payload.name, StudyType: payload.type, FacultyID: String(payload.pi_user_id), DepartmentID: String(payload.department_id || ''), Description: payload.description, Status: payload.status });
             await loadRealData(); showToast('Study saved successfully!', 'success'); closeModal(); window.renderCurrentPage();
         } else { showToast('Error saving study', 'error'); }
     } catch (err) { showToast('Connection error.', 'error'); }

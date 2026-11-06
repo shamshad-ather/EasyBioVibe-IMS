@@ -143,17 +143,21 @@ export async function loadRealData() {
             };
         });
 
-        DB.studies = safeArr(wiz?.studies).map(s => ({ 
-            ...s, 
-            id: String(s.id), 
-            StudyCode: s.study_code || makeCode('STD', s.id), 
-            StudyName: s.study_name, 
-            StudyType: s.study_type, 
-            FacultyID: String(s.faculty_id || ''), 
-            DepartmentID: String(s.department_id || ''), 
-            Status: s.status,
-            Description: s.description || ''
-        }));
+        DB.studies = safeArr(wiz?.studies).map(s => {
+            const fac = DB.faculty.find(f => String(f.id) === String(s.faculty_id || s.pi_user_id || ''));
+            const deptId = (s.department_id && String(s.department_id) !== '0') ? String(s.department_id) : (fac ? String(fac.DepartmentID || '') : '');
+            return { 
+                ...s, 
+                id: String(s.id), 
+                StudyCode: s.study_code || makeCode('STD', s.id), 
+                StudyName: s.study_name, 
+                StudyType: s.study_type, 
+                FacultyID: String(s.faculty_id || s.pi_user_id || ''), 
+                DepartmentID: deptId, 
+                Status: s.status,
+                Description: s.description || ''
+            };
+        });
         
         DB.userStudyAssignments = safeArr(usa);
         DB.myStudies = safeArr(mySt).map(s => ({...s, id: String(s.id)}));

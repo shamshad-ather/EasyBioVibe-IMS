@@ -73,7 +73,7 @@ function renderSettings(content) {
             </form>
         </div></div>
         <div class="card" style="max-width:600px;margin-top:20px;"><div class="card-header"><h2>Legacy ID Migration</h2></div><div class="card-body">
-            <p style="font-size:13px;color:var(--gray-500);margin-bottom:16px;">Update legacy ID codes (Inventory, Equipment, Documents, Batches) to include the current Institution and Lab prefixes. A database backup will automatically be triggered before the migration.</p>
+            <p style="font-size:13px;color:var(--gray-500);margin-bottom:16px;">Update legacy ID codes (Inventory, Equipment, Documents, Batches, Studies) to include the current Institution and Lab prefixes. A database backup will automatically be triggered before the migration.</p>
             <button type="button" class="btn btn-warning" onclick="migrateLegacyIds()">Migrate Legacy IDs</button>
         </div></div>
         <div class="card" style="max-width:600px;margin-top:20px;"><div class="card-header"><h2>Database</h2></div><div class="card-body">
@@ -115,7 +115,7 @@ window.importDatabase = async function() {
 };
 
 window.migrateLegacyIds = async function() {
-    if (!confirm('Are you sure you want to migrate legacy IDs? This will update codes for Inventory, Equipment, Documents, and Batches to include the current Institution and Lab prefixes. This action cannot be undone, though a backup will be created.')) return;
+    if (!confirm('Are you sure you want to migrate legacy IDs? This will update codes for Inventory, Equipment, Documents, Batches, and Studies to include the current Institution and Lab prefixes. This action cannot be undone, though a backup will be created.')) return;
     showToast('Migrating legacy IDs...', 'info');
     try {
         const res = await apiCall('/api/system/migrate_ids', {}, 'POST');
